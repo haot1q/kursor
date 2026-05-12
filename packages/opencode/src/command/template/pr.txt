@@ -1,0 +1,61 @@
+Create a pull request for the current branch.
+
+User-provided extra context (optional — title hint, target branch, reviewer list, draft flag, etc.):
+$ARGUMENTS
+
+## Steps
+
+1. Verify prerequisites:
+   - `gh --version` to confirm GitHub CLI is installed and authenticated (`gh auth status`)
+   - Current branch is not the default branch (`git symbolic-ref refs/remotes/origin/HEAD` then `git branch --show-current`)
+   - All intended changes are committed (`git status` should be clean)
+
+2. Gather context for the PR description:
+   - `git log <default-branch>..HEAD --oneline` — all commits in this PR
+   - `git diff <default-branch>...HEAD --stat` — files changed and size
+   - For multi-commit PRs, read each commit's message to understand the arc of the change
+
+3. Push the branch if not already on remote:
+   ```bash
+   git push -u origin HEAD
+   ```
+
+4. Draft the PR title and body:
+   - **Title** — short, imperative, matches repo convention (Conventional Commits if used, else plain English)
+   - **Body** — use this template, adapt as needed:
+     ```markdown
+     ## Summary
+     <1-3 bullets: what this PR does, at the right altitude for a reviewer>
+
+     ## Why
+     <1 paragraph: the motivation. If linked to an issue, mention it. If purely cleanup / refactor, say so.>
+
+     ## How to verify
+     <1-3 bullets: what a reviewer should run / try / look at to convince themselves it works>
+
+     ## Notes
+     <optional: caveats, follow-ups, anything reviewers should know>
+     ```
+
+5. Decide draft vs ready:
+   - Draft if user said so, if CI hasn't run yet, or if it's clearly WIP
+   - Ready otherwise
+
+6. Create the PR with `gh pr create`. Use a heredoc for the body:
+   ```bash
+   gh pr create --title "<title>" --body "$(cat <<'EOF'
+   ...body...
+   EOF
+   )"
+   ```
+   Append `--draft` if applicable, `--reviewer <users>` if user specified.
+
+7. Report the PR URL.
+
+## Rules
+
+- Do NOT force-push, do NOT push to the default branch, do NOT delete branches.
+- If `git status` is dirty, stop and ask the user whether to commit-everything-first or to abort.
+- If the branch tracks a remote with diverged history, ask before pushing.
+- Do NOT include AI-attribution lines in title or body unless the repo's existing PRs use them.
+- If `gh` is missing or unauthenticated, surface the exact remediation (`brew install gh && gh auth login` etc.) — don't silently fail.

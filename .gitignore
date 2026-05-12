@@ -1,0 +1,53 @@
+# OS / editor
+.DS_Store
+.idea
+.vscode
+.codex
+Session.vim
+*~
+
+# Dependencies
+node_modules
+.bun
+bun-bundled-renderer
+
+# Build artifacts (per-package)
+dist
+ts-dist
+out
+build
+**/.vite
+.turbo
+*.bun-build
+tsconfig.tsbuildinfo
+
+# Caches
+.serena/
+**/.serena
+
+# Local dev
+.env
+.env.local
+.env.*.local
+logs/
+*.log
+tmp
+playground
+opencode-dev
+.scripts
+.direnv/
+.worktrees
+/result
+
+# Project-local config (each user should generate their own)
+/opencode.json
+/kursor.json
+UPCOMING_CHANGELOG.md
+
+# Compiled / packaged binaries
+a.out
+target
+refs
+
+# Old / legacy infra leftovers (defensive)
+.sst

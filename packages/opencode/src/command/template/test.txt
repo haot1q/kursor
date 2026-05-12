@@ -1,0 +1,37 @@
+Run the project's test suite and report the result.
+
+User-provided scope hint (optional — e.g. test name, file path, package):
+$ARGUMENTS
+
+## Steps
+
+1. Discover the test command:
+   - `package.json` → `scripts.test` (also check `scripts.test:unit`, `scripts.test:ci`)
+   - `pyproject.toml` / `setup.cfg` for `pytest`
+   - `Cargo.toml` → `cargo test`
+   - `go.mod` → `go test ./...`
+   - `Makefile` → `make test` target
+   - If a monorepo, look for the workspace-aware command (`turbo run test`, `nx test`, `pnpm -r test`)
+
+2. If `$ARGUMENTS` is provided, narrow scope:
+   - File path → run only tests in that file
+   - Test name fragment → use the runner's filter flag (`--testNamePattern`, `-k`, `--filter`, etc.)
+   - Package name in a monorepo → run only that workspace
+
+3. Run the command via `shell`. Capture the output.
+
+4. Report:
+   - Pass / fail counts
+   - For failures: file + test name + the relevant assertion message (don't dump full stack traces unless asked)
+   - Wall-clock time
+   - If the run timed out or seemed stuck, note it
+
+5. If anything failed, offer to investigate:
+   - "Want me to dig into <test name>?"
+   - Do not auto-fix unless the user explicitly asks
+
+## Rules
+
+- Do NOT modify any test or implementation file as part of this command. This is a read-only check.
+- If you cannot determine the test command, ask the user once with the `question` tool, listing the candidates you considered.
+- Don't dump megabytes of test output. Summarize and link / quote the relevant lines.

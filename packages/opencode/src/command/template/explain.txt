@@ -1,0 +1,37 @@
+Explain a piece of code, file, or concept in this codebase.
+
+User-provided target (a file path, function name, concept, or freeform question):
+$ARGUMENTS
+
+## Steps
+
+1. **Identify what to explain**:
+   - If `$ARGUMENTS` is a file path → read the file
+   - If it's a function/class/symbol → grep for the definition, then read enough of the surrounding code to understand context
+   - If it's a freeform question ("how does X work?") → use exploration tools to find the relevant code, then explain
+   - If empty → ask the user once with `question` what they want explained
+
+2. **Read in context, not in isolation**:
+   - For a function: read the file it lives in and the 1-2 callers
+   - For a file: read the module it's part of
+   - For a system question: trace from the entry point down
+
+3. **Structure the explanation** in this order:
+   - **One-sentence summary** — what this code does, in plain language
+   - **Inputs and outputs** — what goes in, what comes out (types, shapes, side effects)
+   - **How it works** — the actual algorithm / control flow, walk through the non-obvious parts
+   - **Why it's designed this way** — only if you can infer it from context (constraints, performance, history). Don't invent rationale.
+   - **Where it's used** — 1-3 representative call sites
+   - **Gotchas** — edge cases, surprising behavior, things that look like bugs but aren't
+
+4. **Match depth to the user's likely level**:
+   - If they asked "what does this do" → high-level
+   - If they pasted a stack trace or asked "why" → go deep
+   - If unsure, give a 1-paragraph summary and offer to go deeper
+
+## Rules
+
+- Do NOT modify any files. This is a read-only command.
+- Do NOT speculate about intent the code doesn't support. If something is unclear, say so.
+- Use specific file:line references (e.g. `src/foo.ts:42`) so the user can jump to the code.
+- Don't dump the whole file. Quote only the lines you're discussing.
