@@ -133,11 +133,15 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | HttpClie
     )
 
     // Bundled at build time; absent in dev — `tryPromise` covers both.
-    const loadSnapshot = Effect.tryPromise({
-      // @ts-ignore — generated at build time, may not exist in dev
-      try: () => import("./models-snapshot.js").then((m) => m.snapshot as Record<string, Provider> | undefined),
-      catch: () => undefined,
-    }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+    // OPENCODE_DISABLE_MODELS_SNAPSHOT skips the fallback so tests can drive the
+    // empty-providers code path and users can opt into strict cache-only behaviour.
+    const loadSnapshot: Effect.Effect<Record<string, Provider> | undefined> = Flag.OPENCODE_DISABLE_MODELS_SNAPSHOT
+      ? Effect.succeed(undefined)
+      : Effect.tryPromise({
+          // @ts-ignore — generated at build time, may not exist in dev
+          try: () => import("./models-snapshot.js").then((m) => m.snapshot as Record<string, Provider> | undefined),
+          catch: () => undefined,
+        }).pipe(Effect.catch(() => Effect.succeed(undefined)))
 
     const fetchAndWrite = Effect.fn("ModelsDev.fetchAndWrite")(function* () {
       const text = yield* fetchApi()

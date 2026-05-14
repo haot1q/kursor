@@ -43,6 +43,10 @@ export const Flag = {
   OPENCODE_ENABLE_EXPERIMENTAL_MODELS: truthy("OPENCODE_ENABLE_EXPERIMENTAL_MODELS"),
   OPENCODE_DISABLE_AUTOCOMPACT: truthy("OPENCODE_DISABLE_AUTOCOMPACT"),
   OPENCODE_DISABLE_MODELS_FETCH: truthy("OPENCODE_DISABLE_MODELS_FETCH"),
+  // Skip the build-time bundled snapshot fallback in ModelsDev. Tests use this
+  // to exercise the "no providers anywhere" code path; users can set it for
+  // strict cache-only behaviour where the embedded provider list is undesired.
+  OPENCODE_DISABLE_MODELS_SNAPSHOT: truthy("OPENCODE_DISABLE_MODELS_SNAPSHOT"),
   OPENCODE_DISABLE_MOUSE: truthy("OPENCODE_DISABLE_MOUSE"),
   OPENCODE_DISABLE_CLAUDE_CODE,
   OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: OPENCODE_DISABLE_CLAUDE_CODE || truthy("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"),

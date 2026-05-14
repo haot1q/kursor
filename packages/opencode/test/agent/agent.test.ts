@@ -801,13 +801,17 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
       agent: {
         build: { disable: true },
         plan: { disable: true },
+        // kursor adds `coordinator` as a third visible primary agent alongside
+        // build/plan; without disabling it here defaultAgent() would find it
+        // and the "no primary visible agent found" branch would never fire.
+        coordinator: { disable: true },
       },
     },
   })
   await WithInstance.provide({
     directory: tmp.path,
     fn: async () => {
-      // build and plan are disabled, no primary-capable agents remain
+      // build, plan, and coordinator are disabled, no primary-capable agents remain
       await expect(load(tmp.path, (svc) => svc.defaultAgent())).rejects.toThrow("no primary visible agent found")
     },
   })
