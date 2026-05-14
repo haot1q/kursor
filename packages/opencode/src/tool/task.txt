@@ -19,6 +19,7 @@ Usage notes:
 4. The agent's outputs should generally be trusted
 5. Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent. Tell it how to verify its work if possible (e.g., relevant test commands).
 6. If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
+7. If the agent's final answer is large, it is automatically saved to disk. The tool result will then include an `output_file: <path>` line above the `<task_result>` block, the `<task_result>` will contain a head preview, and a `...result truncated — N more lines in output_file` marker will follow. Trust the preview by default — it contains the worker's headline conclusions. Only invoke the `read` tool on `output_file` (with `offset`/`limit`) when you need a specific section the preview omitted. Do NOT routinely re-read the full file; pulling the worker's verbose output back into your context defeats the purpose of delegating to a subagent.
 
 Example usage (NOTE: The agents below are fictional examples for illustration only - use the actual agents listed above):
 
