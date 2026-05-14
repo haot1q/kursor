@@ -7,6 +7,7 @@ import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
+import { TaskStopTool } from "./task_stop"
 import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -113,6 +114,7 @@ export const layer: Layer.Layer<
 
     const invalid = yield* InvalidTool
     const task = yield* TaskTool
+    const taskStop = yield* TaskStopTool
     const read = yield* ReadTool
     const question = yield* QuestionTool
     const todo = yield* TodoWriteTool
@@ -221,6 +223,7 @@ export const layer: Layer.Layer<
           edit: Tool.init(edit),
           write: Tool.init(writetool),
           task: Tool.init(task),
+          task_stop: Tool.init(taskStop),
           fetch: Tool.init(webfetch),
           todo: Tool.init(todo),
           search: Tool.init(websearch),
@@ -246,6 +249,7 @@ export const layer: Layer.Layer<
             tool.edit,
             tool.write,
             tool.task,
+            tool.task_stop,
             tool.fetch,
             tool.todo,
             tool.search,

@@ -1,0 +1,21 @@
+Stop a running background task that you previously launched with `task(run_in_background: true)`.
+
+When to use this tool:
+- A background task is no longer needed (e.g. the user changed direction, or another worker already produced the answer).
+- A background task appears stuck or is taking far longer than expected and you have decided to abandon it.
+- You want to free up the parallelism budget for a different worker.
+
+When NOT to use this tool:
+- A task is still useful — just let it run. Workers complete on their own and post their results as `<task_notification>` messages.
+- You want to cancel a synchronous task you launched in the same turn. Synchronous tasks already block the current turn; they cannot be stopped via this tool.
+- You see no `task_id: started` confirmation in this conversation. You can only stop tasks you launched yourself.
+
+Behaviour:
+- Cancellation is signalled cooperatively. The worker may take a short moment to wind down.
+- Once the worker finishes tearing down, a `<task_notification status="cancelled">` message arrives in this session — same delivery mechanism as completion or failure.
+- Calling task_stop on an unknown id, or on a task that is not a child of this session, returns an error envelope without affecting any session.
+
+Usage notes:
+1. Always pass the exact `task_id` returned by the original `task` invocation. Do not invent ids.
+2. If you launched several tasks in parallel and want to keep some running, call `task_stop` once per id you want to cancel.
+3. The optional `reason` field is logged for debugging — workers never see it.

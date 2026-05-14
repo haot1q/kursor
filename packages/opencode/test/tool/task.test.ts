@@ -1,5 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer } from "effect"
 import fs from "fs/promises"
 import { Agent } from "../../src/agent/agent"
 import { Config } from "@/config/config"
@@ -10,6 +10,7 @@ import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
+import { TaskStopTool } from "../../src/tool/task_stop"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { disposeAllInstances } from "../fixture/fixture"
@@ -1942,6 +1943,66 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance("run_in_background end-to-end: launch, call task_stop, observe cancelled notification", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const taskTool = yield* TaskTool
+      const taskDef = yield* taskTool.init()
+      const stopTool = yield* TaskStopTool
+      const stopDef = yield* stopTool.init()
+
+      // Shared stub between the two tools — task_stop's `cancel` call must
+      // drive the worker's gate to "interrupt", proving the two tools are
+      // wired through the same promptOps surface and that interruption
+      // produces a cancelled notification (not a failed one).
+      const stub = asyncStubOps({ parentSessionID: chat.id, workerText: "would-have-finished", workerDefer: true })
+
+      const launched = yield* taskDef.execute(
+        {
+          description: "to be cancelled",
+          prompt: "long work",
+          subagent_type: "general",
+          run_in_background: true,
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stub.ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+      const taskID = launched.metadata.sessionId
+
+      const stopped = yield* stopDef.execute(
+        { task_id: taskID, reason: "user changed mind" },
+        {
+          sessionID: chat.id,
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stub.ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(stopped.output).toContain("status: cancelled")
+      expect(stub.cancelCalls).toEqual([taskID])
+
+      const [n] = yield* Effect.promise(() => stub.awaitNotifications(1))
+      expect(n.text).toContain("<task_notification>")
+      expect(n.text).toContain("status: cancelled")
+      expect(n.text).toContain(`task_id: ${taskID}`)
+      expect(n.text).toContain("<task_error>")
+      expect(n.text).not.toContain("<task_result>")
+    }),
+  )
+
   it.instance("run_in_background mixed with synchronous task in the same session works", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()
@@ -1994,6 +2055,210 @@ describe("tool.task", () => {
       const [n] = yield* Effect.promise(() => stub.awaitNotifications(1))
       expect(n.text).toContain(`task_id: ${asyncResult.metadata.sessionId}`)
       expect(n.text).toContain("status: completed")
+    }),
+  )
+})
+
+describe("tool.task_stop", () => {
+  const stopOps = (
+    onCancel: (sessionID: SessionID) => void = () => {},
+  ): TaskPromptOps => ({
+    cancel: (sessionID) =>
+      Effect.sync(() => {
+        onCancel(sessionID)
+      }),
+    resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+    prompt: () => Effect.succeed(replyWithTexts({ sessionID: "" as any, parts: [] }, [])),
+  })
+
+  it.instance("cancels a child session owned by the current session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "bg" })
+      const tool = yield* TaskStopTool
+      const def = yield* tool.init()
+      let cancelled: SessionID | undefined
+      const ops = stopOps((id) => {
+        cancelled = id
+      })
+
+      const result = yield* def.execute(
+        { task_id: child.id, reason: "user changed mind" },
+        {
+          sessionID: chat.id,
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(cancelled).toBe(child.id)
+      expect(result.output).toContain("status: cancelled")
+      expect(result.output).toContain(child.id)
+      expect(result.output).toContain("reason: user changed mind")
+      expect(result.metadata).toMatchObject({ taskId: child.id, status: "cancelled" })
+    }),
+  )
+
+  it.instance("returns not_found for an unknown task_id without calling cancel", () =>
+    Effect.gen(function* () {
+      const { chat } = yield* seed()
+      const tool = yield* TaskStopTool
+      const def = yield* tool.init()
+      let cancelCalled = false
+      const ops = stopOps(() => {
+        cancelCalled = true
+      })
+
+      const result = yield* def.execute(
+        { task_id: "ses_does_not_exist" },
+        {
+          sessionID: chat.id,
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(cancelCalled).toBe(false)
+      expect(result.output).toContain("status: not_found")
+      expect(result.metadata).toMatchObject({ taskId: "ses_does_not_exist", status: "not_found" })
+    }),
+  )
+
+  it.instance("denies cancellation of a session that is not a child of the current session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat } = yield* seed()
+      // Create an unrelated session at top-level (no parentID)
+      const unrelated = yield* sessions.create({ title: "stranger" })
+      const tool = yield* TaskStopTool
+      const def = yield* tool.init()
+      let cancelCalled = false
+      const ops = stopOps(() => {
+        cancelCalled = true
+      })
+
+      const result = yield* def.execute(
+        { task_id: unrelated.id },
+        {
+          sessionID: chat.id,
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(cancelCalled).toBe(false)
+      expect(result.output).toContain("status: denied")
+      expect(result.metadata).toMatchObject({ taskId: unrelated.id, status: "denied" })
+    }),
+  )
+
+  it.instance("denies cancellation when task_id refers to the caller's own session id", () =>
+    Effect.gen(function* () {
+      const { chat } = yield* seed()
+      const tool = yield* TaskStopTool
+      const def = yield* tool.init()
+      let cancelCalled = false
+      const ops = stopOps(() => {
+        cancelCalled = true
+      })
+
+      // Passing the parent's own id must NOT cancel the parent — its
+      // `parentID` is undefined (or some other session), not itself, so the
+      // ownership check correctly rejects this.
+      const result = yield* def.execute(
+        { task_id: chat.id },
+        {
+          sessionID: chat.id,
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(cancelCalled).toBe(false)
+      expect(result.output).toContain("status: denied")
+    }),
+  )
+
+  it.instance("omits the reason line from output when reason is not provided", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "bg" })
+      const tool = yield* TaskStopTool
+      const def = yield* tool.init()
+      const ops = stopOps()
+
+      const result = yield* def.execute(
+        { task_id: child.id },
+        {
+          sessionID: chat.id,
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(result.output).toContain("status: cancelled")
+      expect(result.output).not.toContain("reason:")
+    }),
+  )
+
+  it.instance("invokes cancel exactly once per successful task_stop call", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "bg" })
+      const tool = yield* TaskStopTool
+      const def = yield* tool.init()
+      const cancels: SessionID[] = []
+      const ops = stopOps((id) => {
+        cancels.push(id)
+      })
+
+      yield* def.execute(
+        { task_id: child.id, reason: "done with it" },
+        {
+          sessionID: chat.id,
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: ops },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      // Idempotency: multiple cancels of the same session in close succession
+      // are not the tool's responsibility (the session run-state layer
+      // de-duplicates), but the tool itself must invoke cancel exactly once
+      // per task_stop call.
+      expect(cancels).toEqual([child.id])
     }),
   )
 })
