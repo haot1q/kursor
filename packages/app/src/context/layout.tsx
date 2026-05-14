@@ -133,6 +133,122 @@ const normalizeStoredSessionTabs = (key: string, tabs: SessionTabs) => {
   }
 }
 
+export const isLayoutRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+/**
+ * Pure migration applied to the persisted layout blob.
+ *
+ * Exported so it can be unit-tested in isolation from the SolidJS context closure.
+ * Behavior contract (kursor additions are marked in comments inside the body):
+ * - sidebar.workspaces:boolean → {workspaces:{},workspacesDefault:boolean}
+ * - sidebar: force-open once via `kursorForceOpen` marker; subsequent runs respect user toggles
+ * - fileTree: force-open + tab="all" once via `kursorForceOpen` marker; subsequent runs respect user toggles
+ * - review.panelOpened: backfilled from fileTree.opened when missing (legacy bridge)
+ * - sessionTabs: normalize stored tab paths
+ *
+ * The function is referentially-stable on its inputs: returns the same `value` reference
+ * when nothing changed, otherwise rebuilds the top level.
+ */
+export function migrateLayoutValue(value: unknown): unknown {
+  if (!isLayoutRecord(value)) return value
+
+  const sidebar = value.sidebar
+  const migratedSidebar = (() => {
+    if (!isLayoutRecord(sidebar)) return sidebar
+    const workspacesNormalized =
+      typeof sidebar.workspaces === "boolean"
+        ? { ...sidebar, workspaces: {}, workspacesDefault: sidebar.workspaces }
+        : sidebar
+    // kursor: default the session-selector sidebar to expanded on first run,
+    // matching the four-column Cursor-style desktop layout. Use a one-time
+    // migration marker so we only force-open once and respect user toggles after.
+    if ((workspacesNormalized as Record<string, unknown>).kursorForceOpen === true) {
+      return workspacesNormalized
+    }
+    return { ...workspacesNormalized, opened: true, kursorForceOpen: true }
+  })()
+
+  const review = value.review
+  const fileTree = value.fileTree
+  const migratedFileTree = (() => {
+    if (!isLayoutRecord(fileTree)) return fileTree
+    const width = typeof fileTree.width === "number" ? fileTree.width : DEFAULT_FILE_TREE_WIDTH
+    // kursor: always default to a visible file tree showing all files, like Cursor.
+    // Existing persisted state may have opened=false / tab="changes" — coerce it once
+    // by stamping a migration marker so we only force-open on first run after this fix.
+    if (fileTree.kursorForceOpen === true) {
+      if (fileTree.tab === "changes" || fileTree.tab === "all") return fileTree
+      return {
+        ...fileTree,
+        opened: true,
+        width: width === 260 ? DEFAULT_FILE_TREE_WIDTH : width,
+        tab: "all",
+      }
+    }
+    return {
+      ...fileTree,
+      opened: true,
+      width: width === 260 ? DEFAULT_FILE_TREE_WIDTH : width,
+      tab: "all",
+      kursorForceOpen: true,
+    }
+  })()
+
+  const migratedReview = (() => {
+    if (!isLayoutRecord(review)) return review
+    if (typeof review.panelOpened === "boolean") return review
+
+    const opened = isLayoutRecord(fileTree) && typeof fileTree.opened === "boolean" ? fileTree.opened : true
+    return {
+      ...review,
+      panelOpened: opened,
+    }
+  })()
+
+  const sessionTabs = value.sessionTabs
+  const migratedSessionTabs = (() => {
+    if (!isLayoutRecord(sessionTabs)) return sessionTabs
+
+    let changed = false
+    const next = Object.fromEntries(
+      Object.entries(sessionTabs).map(([key, tabs]) => {
+        if (!isLayoutRecord(tabs) || !Array.isArray(tabs.all)) return [key, tabs]
+
+        const current = {
+          all: tabs.all.filter((tab): tab is string => typeof tab === "string"),
+          active: typeof tabs.active === "string" ? tabs.active : undefined,
+        }
+        const normalized = normalizeStoredSessionTabs(key, current)
+        if (current.all.length !== tabs.all.length) changed = true
+        if (!same(current.all, normalized.all) || current.active !== normalized.active) changed = true
+        if (tabs.active !== undefined && typeof tabs.active !== "string") changed = true
+        return [key, normalized]
+      }),
+    )
+
+    if (!changed) return sessionTabs
+    return next
+  })()
+
+  if (
+    migratedSidebar === sidebar &&
+    migratedReview === review &&
+    migratedFileTree === fileTree &&
+    migratedSessionTabs === sessionTabs
+  ) {
+    return value
+  }
+
+  return {
+    ...value,
+    sidebar: migratedSidebar,
+    review: migratedReview,
+    fileTree: migratedFileTree,
+    sessionTabs: migratedSessionTabs,
+  }
+}
+
 export const { use: useLayout, provider: LayoutProvider } = createSimpleContext({
   name: "Layout",
   init: () => {
@@ -141,109 +257,14 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     const server = useServer()
     const platform = usePlatform()
 
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
-      typeof value === "object" && value !== null && !Array.isArray(value)
-
-    const migrate = (value: unknown) => {
-      if (!isRecord(value)) return value
-
-      const sidebar = value.sidebar
-      const migratedSidebar = (() => {
-        if (!isRecord(sidebar)) return sidebar
-        if (typeof sidebar.workspaces !== "boolean") return sidebar
-        return {
-          ...sidebar,
-          workspaces: {},
-          workspacesDefault: sidebar.workspaces,
-        }
-      })()
-
-      const review = value.review
-      const fileTree = value.fileTree
-      const migratedFileTree = (() => {
-        if (!isRecord(fileTree)) return fileTree
-        const width = typeof fileTree.width === "number" ? fileTree.width : DEFAULT_FILE_TREE_WIDTH
-        // kursor: always default to a visible file tree showing all files, like Cursor.
-        // Existing persisted state may have opened=false / tab="changes" — coerce it once
-        // by stamping a migration marker so we only force-open on first run after this fix.
-        if (fileTree.kursorForceOpen === true) {
-          if (fileTree.tab === "changes" || fileTree.tab === "all") return fileTree
-          return {
-            ...fileTree,
-            opened: true,
-            width: width === 260 ? DEFAULT_FILE_TREE_WIDTH : width,
-            tab: "all",
-          }
-        }
-        return {
-          ...fileTree,
-          opened: true,
-          width: width === 260 ? DEFAULT_FILE_TREE_WIDTH : width,
-          tab: "all",
-          kursorForceOpen: true,
-        }
-      })()
-
-      const migratedReview = (() => {
-        if (!isRecord(review)) return review
-        if (typeof review.panelOpened === "boolean") return review
-
-        const opened = isRecord(fileTree) && typeof fileTree.opened === "boolean" ? fileTree.opened : true
-        return {
-          ...review,
-          panelOpened: opened,
-        }
-      })()
-
-      const sessionTabs = value.sessionTabs
-      const migratedSessionTabs = (() => {
-        if (!isRecord(sessionTabs)) return sessionTabs
-
-        let changed = false
-        const next = Object.fromEntries(
-          Object.entries(sessionTabs).map(([key, tabs]) => {
-            if (!isRecord(tabs) || !Array.isArray(tabs.all)) return [key, tabs]
-
-            const current = {
-              all: tabs.all.filter((tab): tab is string => typeof tab === "string"),
-              active: typeof tabs.active === "string" ? tabs.active : undefined,
-            }
-            const normalized = normalizeStoredSessionTabs(key, current)
-            if (current.all.length !== tabs.all.length) changed = true
-            if (!same(current.all, normalized.all) || current.active !== normalized.active) changed = true
-            if (tabs.active !== undefined && typeof tabs.active !== "string") changed = true
-            return [key, normalized]
-          }),
-        )
-
-        if (!changed) return sessionTabs
-        return next
-      })()
-
-      if (
-        migratedSidebar === sidebar &&
-        migratedReview === review &&
-        migratedFileTree === fileTree &&
-        migratedSessionTabs === sessionTabs
-      ) {
-        return value
-      }
-
-      return {
-        ...value,
-        sidebar: migratedSidebar,
-        review: migratedReview,
-        fileTree: migratedFileTree,
-        sessionTabs: migratedSessionTabs,
-      }
-    }
+    const migrate = migrateLayoutValue
 
     const target = Persist.global("layout", ["layout.v6"])
     const [store, setStore, _, ready] = persisted(
       { ...target, migrate },
       createStore({
         sidebar: {
-          opened: false,
+          opened: true,
           width: DEFAULT_SIDEBAR_WIDTH,
           workspaces: {} as Record<string, boolean>,
           workspacesDefault: false,

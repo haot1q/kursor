@@ -1844,7 +1844,7 @@ export default function Page() {
           aria-hidden={!chatOpen()}
           inert={!chatOpen()}
           classList={{
-            "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger md:flex-none overflow-hidden": true,
+            "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger md:flex-none md:order-2 overflow-hidden": true,
             "flex-1": chatOpen(),
             "pointer-events-none": !chatOpen(),
             "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
