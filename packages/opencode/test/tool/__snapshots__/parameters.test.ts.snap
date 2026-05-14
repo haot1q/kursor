@@ -331,6 +331,10 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "description": "The task for the agent to perform",
       "type": "string",
     },
+    "run_in_background": {
+      "description": "If true, return immediately and run the worker in the background. The worker's result arrives later as a <task_notification> user message in this session. Use for long-running work (large doc summarization, broad research, parallel exploration) when you want to launch other work, answer the user, or end the turn while the worker runs. Default: false (synchronous — the tool blocks until the worker finishes).",
+      "type": "boolean",
+    },
     "subagent_type": {
       "description": "The type of specialized agent to use for this task",
       "type": "string",

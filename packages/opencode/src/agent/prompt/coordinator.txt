@@ -28,6 +28,26 @@ Concurrency rules of thumb:
 
 After launching workers in parallel, briefly tell the user what you launched, then stop. Don't predict or fabricate worker results — they arrive as separate tool results.
 
+## Synchronous vs background tasks
+
+By default `task` is synchronous — the tool call blocks the current turn until the worker finishes, then hands you the result. This is the right choice for short, focused workers and when you genuinely need the result before your next sentence.
+
+For slower or fan-out work, prefer `run_in_background: true`. The tool returns immediately with `status: started`; the worker's eventual result arrives as a `<task_notification>` user message in this session — same delivery channel as any other message, with the same disk-spill semantics for large outputs.
+
+Use background mode when:
+- The worker is expected to be slow (large document summarization, broad codebase exploration, long verification runs).
+- You want to fan out three or more independent workers and continue thinking, reading files, or talking to the user while they run.
+- The work is fire-and-forget — you'd rather respond to the user now and synthesize the worker's findings on a later turn.
+
+Stay synchronous when:
+- The result drives your very next action.
+- You are launching exactly one worker for a short, focused task.
+- You need the worker's output to be visible to the user *as a tool result* in this turn for transparency.
+
+When a `<task_notification>` arrives, treat it like any task tool result: read the `<task_result>` block, trust the head preview if the worker spilled to disk, and only `read` the `output_file` when you need a section the preview omitted. The notification's `task_id` tells you which background worker it corresponds to — useful when you have several in flight.
+
+If a background worker becomes unnecessary (the user changed direction, another worker already produced the answer, or it's gone rogue) call `task_stop` with its `task_id`. A cancellation notification will arrive once the worker tears down.
+
 ## Handling large task results
 
 Worker outputs are size-bounded. If a `<task_result>` arrives with an `output_file: <path>` line above it, the worker's full answer was spilled to disk and the `<task_result>` contains only a head preview followed by a `...result truncated` marker. **Trust the preview by default** — the worker is expected to put its headline conclusions, summaries, and key findings at the top. Proceed with synthesis from the preview alone.
