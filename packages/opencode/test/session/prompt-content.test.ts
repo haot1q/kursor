@@ -9,6 +9,12 @@ const COMMAND_TEMPLATE_DIR = path.resolve(import.meta.dir, "../../src/command/te
 const SKILL_BUNDLED_DIR = path.resolve(import.meta.dir, "../../src/skill/bundled")
 const SKILL_PROMPT_DIR = path.resolve(import.meta.dir, "../../src/skill/prompt")
 
+// Source files we cross-reference in coupling tests. These are READ AS TEXT
+// (not imported) so the tests still catch drift even if a refactor reshapes
+// the module's exported surface.
+const SKILL_INDEX_TS = path.resolve(import.meta.dir, "../../src/skill/index.ts")
+const INSTRUCTION_TS = path.resolve(import.meta.dir, "../../src/session/instruction.ts")
+
 const readPrompt = (filename: string, dir: string = PROMPT_DIR): string =>
   readFileSync(path.join(dir, filename), "utf8")
 
@@ -132,9 +138,9 @@ describe("session prompt files — structural contract (regression guard)", () =
     const text = readPrompt("anthropic.txt")
     // Earlier file had `- ` on its own line — a cosmetic bug AND a dead bullet
     // that signals to the model that the workflow list is incomplete or malformed.
-    // Detect any line that is just a dash (with optional whitespace).
+    // Detect any line that is just a dash with optional whitespace (space OR tab).
     const lines = text.split("\n")
-    const orphanIdx = lines.findIndex((line) => /^- *$/.test(line))
+    const orphanIdx = lines.findIndex((line) => /^-\s*$/.test(line))
     expect(orphanIdx, `found orphan empty bullet at line ${orphanIdx + 1}`).toBe(-1)
   })
 
@@ -241,7 +247,7 @@ describe("session prompt files — structural contract (regression guard)", () =
 })
 
 describe("brand contract — model prompts identify the agent as kursor", () => {
-  test.each(MODEL_PROMPTS)("%s self-identity block mentions kursor", (name) => {
+  test.each([...MODEL_PROMPTS])("%s self-identity block mentions kursor", (name) => {
     const text = readPrompt(name)
     // Identity is typically "You are kursor, ..." on line 1, but some prompts
     // split it across two lines (e.g. "You are an expert assistant\nYour name is kursor").
@@ -250,7 +256,7 @@ describe("brand contract — model prompts identify the agent as kursor", () => 
     expect(head, `${name} identity block should mention kursor`).toMatch(/\bkursor\b/i)
   })
 
-  test.each(MODEL_PROMPTS)("%s does not self-identify as 'You are OpenCode/opencode' agent", (name) => {
+  test.each([...MODEL_PROMPTS])("%s does not self-identify as 'You are OpenCode/opencode' agent", (name) => {
     const text = readPrompt(name)
     // The exact regression we're fixing: "You are OpenCode" / "You are opencode" as identity.
     // Allow casual references to the upstream project name elsewhere (e.g. in docs URLs) by
@@ -355,7 +361,7 @@ describe("tool description structural completeness — every tool .txt is valid"
     "todowrite.txt",
   ] as const
 
-  test.each(REQUIRED_TOOL_TXT)("%s exists and has reasonable content length", (name) => {
+  test.each([...REQUIRED_TOOL_TXT])("%s exists and has reasonable content length", (name) => {
     const filePath = path.join(TOOL_DIR, name)
     const content = readFileSync(filePath, "utf8")
     expect(content.length, `${name} suspiciously short`).toBeGreaterThan(50)
@@ -423,7 +429,7 @@ describe("agent prompt completeness — coordinator + subagents", () => {
     "compaction.txt",
   ] as const
 
-  test.each(REQUIRED_AGENT_PROMPTS)("%s exists and has reasonable content length", (name) => {
+  test.each([...REQUIRED_AGENT_PROMPTS])("%s exists and has reasonable content length", (name) => {
     const filePath = path.join(AGENT_PROMPT_DIR, name)
     const content = readFileSync(filePath, "utf8")
     expect(content.length, `${name} suspiciously short`).toBeGreaterThan(50)
@@ -469,4 +475,135 @@ describe("global brand sweep — no 'OpenCode' brand spelling in any model-consu
       expect(content).not.toMatch(/\bOpenCode\b/)
     },
   )
+})
+
+// =============================================================================
+// Gap 1: cross-prompt # Doing tasks workflow parity.
+//
+// anthropic.txt was missing 4 of 5 canonical workflow steps (silently — caught
+// only when audited against default.txt / trinity.txt). The same regression
+// could just as easily hit default.txt or trinity.txt without these contracts.
+// Pure defensive: locks the existing-canonical wording across the 3 prompts
+// that share the "# Doing tasks" 5-step format.
+// =============================================================================
+describe("cross-prompt # Doing tasks workflow parity (anthropic / default / trinity)", () => {
+  const WORKFLOW_PROMPTS = ["anthropic.txt", "default.txt", "trinity.txt"] as const
+
+  test.each([...WORKFLOW_PROMPTS])("%s instructs the model to verify the solution with tests", (name) => {
+    const text = readPrompt(name)
+    expect(text).toMatch(/[Vv]erify the solution.*tests?|verify.*with tests/)
+  })
+
+  test.each([...WORKFLOW_PROMPTS])("%s requires running lint + typecheck after task completion", (name) => {
+    const text = readPrompt(name)
+    expect(text).toMatch(/lint.*typecheck|typecheck.*lint/i)
+  })
+
+  test.each([...WORKFLOW_PROMPTS])("%s forbids committing without an explicit user request", (name) => {
+    const text = readPrompt(name)
+    expect(text).toMatch(/NEVER commit.*unless.*(user|explicit|ask)/i)
+  })
+
+  test.each([...WORKFLOW_PROMPTS])(
+    "%s recommends using search tools to understand the codebase first",
+    (name) => {
+      const text = readPrompt(name)
+      // The first canonical step. Wording is consistent across the 3 prompts.
+      expect(text).toMatch(/[Uu]se the available search tools|search tools.*understand.*codebase/)
+    },
+  )
+})
+
+// =============================================================================
+// Gap 4: formatting hygiene — sweep ALL model-consumed files for orphan empty
+// bullets ("- " on its own line with nothing after). This bug already shipped
+// in anthropic.txt and was only caught manually; this sweep makes the same
+// class of bug fail loudly in CI for every other file too.
+//
+// The check rejects /^- *$/ — a line that is just a dash with optional
+// trailing whitespace. Legitimate bullets always have content after the dash,
+// so this is safe.
+// =============================================================================
+describe("formatting hygiene — no orphan empty bullets in any model-consumed file", () => {
+  const SCAN_DIRS = [
+    PROMPT_DIR,
+    TOOL_DIR,
+    AGENT_PROMPT_DIR,
+    COMMAND_TEMPLATE_DIR,
+    SKILL_BUNDLED_DIR,
+    SKILL_PROMPT_DIR,
+  ]
+  const allFiles = SCAN_DIRS.flatMap(listTextFiles)
+
+  test("scan discovers a meaningful set of model-consumed files", () => {
+    expect(allFiles.length).toBeGreaterThan(20)
+  })
+
+  test.each(allFiles.map((f) => [path.relative(path.resolve(import.meta.dir, "../.."), f), f]))(
+    "%s has no orphan empty bullet lines",
+    (_label, filePath) => {
+      const content = readFileSync(filePath, "utf8")
+      const orphans: number[] = []
+      // Allow space OR tab after the dash — both are legal-but-empty bullets.
+      content.split("\n").forEach((line, i) => {
+        if (/^-\s*$/.test(line)) orphans.push(i + 1)
+      })
+      expect(orphans, `${path.basename(filePath)} has orphan empty bullets at lines ${orphans.join(", ")}`).toEqual(
+        [],
+      )
+    },
+  )
+})
+
+// =============================================================================
+// Gap 6 + 8: cross-file coupling — prompts make claims about the runtime
+// behavior (Skill.fmt's <available_skills> XML output; the auto-loaded
+// instruction filenames). If the runtime drifts away from those claims, the
+// prompts lie to the model. These tests read the runtime source files as text
+// and assert the literal strings the prompts reference are still emitted.
+// =============================================================================
+describe("system coupling — prompt claims match runtime source", () => {
+  test("Skill.fmt source emits the <available_skills> tag that anthropic.txt references", () => {
+    // anthropic.txt:80 says: 'Look at the `<available_skills>` section later in your system context'.
+    // If Skill.fmt changes its wrapper tag, the prompt's anchor goes stale.
+    const src = readFileSync(SKILL_INDEX_TS, "utf8")
+    expect(src, "Skill.fmt should still emit the <available_skills> opening tag literally").toMatch(
+      /<available_skills>/,
+    )
+    expect(src, "Skill.fmt should still emit the </available_skills> closing tag literally").toMatch(
+      /<\/available_skills>/,
+    )
+  })
+
+  test("Skill.fmt source uses verbose mode's <name>/<description> entries that anthropic.txt references", () => {
+    // anthropic.txt:80 also says: 'Each entry has a <name> and a <description>'.
+    // Lock that the per-skill XML structure stays <name>/<description>.
+    const src = readFileSync(SKILL_INDEX_TS, "utf8")
+    expect(src).toMatch(/<name>\$\{skill\.name\}<\/name>/)
+    expect(src).toMatch(/<description>\$\{skill\.description\}<\/description>/)
+  })
+
+  test("session/instruction.ts auto-loads AGENTS.md", () => {
+    // AGENTS.md is the always-on instruction file; this is the documented
+    // convention that the rebrand commit also preserved. Lock the literal.
+    const src = readFileSync(INSTRUCTION_TS, "utf8")
+    expect(src).toMatch(/['"`]AGENTS\.md['"`]/)
+  })
+
+  test("session/instruction.ts conditionally auto-loads CLAUDE.md (gated by OPENCODE_DISABLE_CLAUDE_CODE_PROMPT)", () => {
+    // CLAUDE.md loading is gated by a flag so users can opt out. Both pieces
+    // (the filename literal AND the flag name) must be present together — if
+    // either drifts, the auto-load behavior silently changes.
+    const src = readFileSync(INSTRUCTION_TS, "utf8")
+    expect(src).toMatch(/['"`]CLAUDE\.md['"`]/)
+    expect(src).toMatch(/OPENCODE_DISABLE_CLAUDE_CODE_PROMPT/)
+  })
+
+  test("session/instruction.ts preserves CONTEXT.md (deprecated but still auto-loaded for backwards compat)", () => {
+    // CONTEXT.md is marked deprecated but kept in the FILES allowlist for
+    // backwards compat. If someone removes it, existing user repos that still
+    // ship CONTEXT.md silently stop having their instructions loaded.
+    const src = readFileSync(INSTRUCTION_TS, "utf8")
+    expect(src).toMatch(/['"`]CONTEXT\.md['"`]/)
+  })
 })
