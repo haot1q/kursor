@@ -99,6 +99,35 @@ describe("session prompt files — structural contract (regression guard)", () =
     expect(text).toMatch(/(concurrent|multiple).*(worktree|codebase)|worktree.*(concurrent|shared)|do NOT revert/i)
   })
 
+  test("anthropic.txt references the <available_skills> anchor that Skill.fmt injects", () => {
+    const text = readPrompt("anthropic.txt")
+    // Skill.fmt(list, { verbose: true }) wraps the list in <available_skills>...</available_skills>.
+    // The prompt should give the model a precise XML anchor to find it.
+    expect(text).toMatch(/<available_skills>|available_skills section|<available_skills/)
+  })
+
+  test("anthropic.txt directs the model to scan Skills before non-trivial work", () => {
+    const text = readPrompt("anthropic.txt")
+    // Must teach the proactive habit: glance at Skills BEFORE diving in,
+    // not just "use the skill tool when a task matches" which is already in
+    // the dynamic injection.
+    expect(text).toMatch(/before (starting|diving|launching).*(task|plan|work)|scan.*Skill|check.*available.*Skill/i)
+  })
+
+  test("anthropic.txt names the `skill` tool by ID for loading a Skill's playbook", () => {
+    const text = readPrompt("anthropic.txt")
+    // The tool ID is `skill` (lowercase). Reference it inline so the model
+    // knows the literal tool name to invoke.
+    expect(text).toMatch(/`skill`|the skill tool/i)
+  })
+
+  test("anthropic.txt forbids speculative `skill` calls when no Skill matches", () => {
+    const text = readPrompt("anthropic.txt")
+    // Guard rail: loading an irrelevant Skill wastes context tokens. Anti-pattern
+    // must be explicitly forbidden so eager models don't reflexively call `skill`.
+    expect(text).toMatch(/do NOT call.*skill.*speculat|speculatively|no.*Skill.*(matches|fits)/i)
+  })
+
   test("codex.txt retains apply_patch + parallel + git safety guidance", () => {
     const text = readPrompt("codex.txt")
     expect(text).toMatch(/apply_patch/i)
