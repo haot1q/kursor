@@ -80,6 +80,25 @@ describe("session prompt files — structural contract (regression guard)", () =
     expect(text).toMatch(/file_path:line_number/i)
   })
 
+  test("anthropic.txt makes the model aware of the kursor desktop GUI surface", () => {
+    const text = readPrompt("anthropic.txt")
+    // Tight regex: require a specific kursor-GUI phrase, NOT a substring match
+    // (the bare word "GUI" would also hit "guidance" via the /i flag).
+    expect(text).toMatch(/four.?column|kursor (GUI|desktop)|code viewer column/)
+  })
+
+  test("anthropic.txt encourages clickable file_path:line_number citations in the GUI", () => {
+    const text = readPrompt("anthropic.txt")
+    expect(text).toMatch(/clickable|click.* to (jump|navigate)|jump.?to/i)
+  })
+
+  test("anthropic.txt warns about concurrent agents / shared worktree (parity with gpt.txt + codex.txt)", () => {
+    const text = readPrompt("anthropic.txt")
+    // Tight regex: must explicitly link concurrency to a worktree / codebase,
+    // not just match the unrelated "multiple agents in parallel" tool-call line.
+    expect(text).toMatch(/(concurrent|multiple).*(worktree|codebase)|worktree.*(concurrent|shared)|do NOT revert/i)
+  })
+
   test("codex.txt retains apply_patch + parallel + git safety guidance", () => {
     const text = readPrompt("codex.txt")
     expect(text).toMatch(/apply_patch/i)
