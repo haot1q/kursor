@@ -128,6 +128,38 @@ describe("session prompt files — structural contract (regression guard)", () =
     expect(text).toMatch(/do NOT call.*skill.*speculat|speculatively|no.*Skill.*(matches|fits)/i)
   })
 
+  test("anthropic.txt # Doing tasks does not contain an orphan empty bullet ('- \\n')", () => {
+    const text = readPrompt("anthropic.txt")
+    // Earlier file had `- ` on its own line — a cosmetic bug AND a dead bullet
+    // that signals to the model that the workflow list is incomplete or malformed.
+    // Detect any line that is just a dash (with optional whitespace).
+    const lines = text.split("\n")
+    const orphanIdx = lines.findIndex((line) => /^- *$/.test(line))
+    expect(orphanIdx, `found orphan empty bullet at line ${orphanIdx + 1}`).toBe(-1)
+  })
+
+  test("anthropic.txt # Doing tasks instructs the model to verify the solution with tests", () => {
+    const text = readPrompt("anthropic.txt")
+    // Parity with default.txt / trinity.txt: verify step must be present so the
+    // model does not declare done without test validation.
+    expect(text).toMatch(/[Vv]erify the solution.*tests?|verify.*with tests/)
+  })
+
+  test("anthropic.txt # Doing tasks requires running lint + typecheck after task completion", () => {
+    const text = readPrompt("anthropic.txt")
+    // Parity with default.txt / trinity.txt: the "VERY IMPORTANT" lint/typecheck
+    // reminder is the strongest quality gate in the canonical Anthropic-style
+    // workflow. Its absence in anthropic.txt is a real regression vs. peer prompts.
+    expect(text).toMatch(/lint.*typecheck|typecheck.*lint/i)
+  })
+
+  test("anthropic.txt # Doing tasks forbids committing without explicit user request", () => {
+    const text = readPrompt("anthropic.txt")
+    // Critical safety nudge: stops the model from auto-committing after a task.
+    // Parity with default.txt / trinity.txt.
+    expect(text).toMatch(/NEVER commit.*unless.*(user|explicit|ask)/i)
+  })
+
   test("codex.txt retains apply_patch + parallel + git safety guidance", () => {
     const text = readPrompt("codex.txt")
     expect(text).toMatch(/apply_patch/i)
