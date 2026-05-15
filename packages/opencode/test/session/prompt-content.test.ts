@@ -160,6 +160,65 @@ describe("session prompt files — structural contract (regression guard)", () =
     expect(text).toMatch(/NEVER commit.*unless.*(user|explicit|ask)/i)
   })
 
+  // ---------------------------------------------------------------------------
+  // Defensive contracts: lock the existing "do not revert other changes" +
+  // concurrent-worktree wording in gpt.txt and codex.txt. These prompts ALREADY
+  // contain the correct guidance — these tests exist purely so a future edit
+  // (sweep rewrite, accidental delete, prompt minification) cannot silently
+  // remove the safety nudge.
+  //
+  // gpt.txt: single concise paragraph mentioning concurrent agents.
+  // codex.txt: richer "Git and workspace hygiene" section with extra guard rails
+  //            (no amend, no destructive git commands).
+  // ---------------------------------------------------------------------------
+
+  test("gpt.txt forbids reverting changes the model did not make (safety contract)", () => {
+    const text = readPrompt("gpt.txt")
+    // Locks the exact safety phrasing — model must NEVER revert/undo/modify
+    // changes it did not make without explicit user request.
+    expect(text).toMatch(/NEVER revert.*did not make|did not make.*unless.*explicit/i)
+  })
+
+  test("gpt.txt makes the model aware of concurrent agents on the same codebase", () => {
+    const text = readPrompt("gpt.txt")
+    // Locks the concurrency-awareness phrase that frames unexpected changes
+    // as legitimate (from user / other agents), not as drift to be cleaned up.
+    expect(text).toMatch(/multiple agents.*(working|codebase|worktree).*concurrent|concurrent.*(agents|user|sessions?)/i)
+  })
+
+  test("gpt.txt instructs the model to continue past unexpected changes instead of halting", () => {
+    const text = readPrompt("gpt.txt")
+    // Positive complement to the negative "do not revert" rule.
+    expect(text).toMatch(/continue with your task|continue.*work.*around|proceed (with|around)/i)
+  })
+
+  test("codex.txt acknowledges the model may be in a dirty git worktree", () => {
+    const text = readPrompt("codex.txt")
+    // Situational priming — without this the model treats any local diff as
+    // suspect and may try to clean it up.
+    expect(text).toMatch(/dirty git worktree|dirty.*worktree|worktree.*dirty/i)
+  })
+
+  test("codex.txt forbids reverting changes the model did not make (safety contract)", () => {
+    const text = readPrompt("codex.txt")
+    expect(text).toMatch(/NEVER revert.*did not make|did not make.*unless.*explicit/i)
+  })
+
+  test("codex.txt forbids amending commits without explicit request", () => {
+    const text = readPrompt("codex.txt")
+    // The "Do not amend commits" rule prevents the model from rewriting git
+    // history when asked for a follow-up commit.
+    expect(text).toMatch(/Do not amend.*unless.*(explicit|request)|NEVER amend.*unless/i)
+  })
+
+  test("codex.txt forbids destructive git commands (git reset --hard, git checkout --)", () => {
+    const text = readPrompt("codex.txt")
+    // The destructive-commands ban is the strongest single guard rail against
+    // accidental data loss. Lock the literal command examples — drift in the
+    // examples themselves should fail this contract.
+    expect(text).toMatch(/destructive commands.*git reset|git reset --hard|git checkout --/)
+  })
+
   test("codex.txt retains apply_patch + parallel + git safety guidance", () => {
     const text = readPrompt("codex.txt")
     expect(text).toMatch(/apply_patch/i)
