@@ -2,7 +2,9 @@
 - Searches file contents using regular expressions
 - Supports full regex syntax (eg. "log.*Error", "function\s+\w+", etc.)
 - Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")
-- Returns file paths and line numbers with at least one match sorted by modification time
+- Returns file paths and line numbers with at least one match sorted by modification time (newest first)
+- Results are capped at 100 matches per call. When the cap is hit the output includes a "showing first 100" notice — narrow with `include` (glob filter) or `path` (subdirectory) and re-run rather than guessing what was truncated.
+- When you have multiple INDEPENDENT search patterns (e.g. looking for several unrelated symbols in parallel), issue them as separate `grep` calls in the SAME turn so they run concurrently. Do NOT chain them sequentially when one does not feed the next.
 - Use this tool when you need to find files containing specific patterns
 - If you need to identify/count the number of matches within files, use the Bash tool with `rg` (ripgrep) directly. Do NOT use `grep`.
 - When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead

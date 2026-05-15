@@ -1,10 +1,15 @@
-Performs exact string replacements in files. 
+Performs exact string replacements in files.
+
+Best practice (avoid the most common failure modes by following these on the first call):
+- Include 3-5 lines of surrounding context before and after the change in `oldString` so that the match is unique within the file. This is the single biggest source of edit failures — making `oldString` larger up front is almost always cheaper than recovering from a "multiple matches" error.
+- The tool normalizes line endings internally and preserves the file's original CRLF / LF style on write. Do NOT pre-encode `\r\n` in `oldString`; supply the visible text exactly as the Read tool returned it (newlines only).
+- The tool will fail if `oldString === newString`. If you intended a no-op, do not call `edit`.
 
 Usage:
-- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. 
+- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
 - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + colon + space (e.g., `1: `). Everything after that space is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
 - The edit will FAIL if `oldString` is not found in the file with an error "oldString not found in content".
-- The edit will FAIL if `oldString` is found multiple times in the file with an error "Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match." Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`. 
+- The edit will FAIL if `oldString` is found multiple times in the file with an error "Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match." Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`.
 - Use `replaceAll` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.

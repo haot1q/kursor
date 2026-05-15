@@ -159,10 +159,38 @@ describe("tool description contract (regression guard)", () => {
     expect(text).toMatch(/multiple matches|unique|replaceAll/i)
   })
 
+  test("edit.txt teaches uniqueness as an upfront best practice (not only on error)", () => {
+    const text = readPrompt("edit.txt", TOOL_DIR)
+    // Distinct from the FAIL-condition mention; require an explicit "include
+    // surrounding context up front" directive so the model gets it right on first
+    // try instead of learning via failure round-trips.
+    expect(text).toMatch(/include .* (surrounding|context|lines).* (before|around|to make|so that)/i)
+  })
+
+  test("edit.txt warns about the LINE_NUMBER prefix anti-pattern explicitly", () => {
+    const text = readPrompt("edit.txt", TOOL_DIR)
+    expect(text).toMatch(/line.?number.*prefix|`\d+: ?`/i)
+  })
+
+  test("edit.txt clarifies CRLF / line-ending handling so model does not pre-normalize", () => {
+    const text = readPrompt("edit.txt", TOOL_DIR)
+    expect(text).toMatch(/CRLF|line ending|line-ending|\\r\\n/i)
+  })
+
   test("grep.txt mentions regex + include filter", () => {
     const text = readPrompt("grep.txt", TOOL_DIR)
     expect(text).toMatch(/regular expression|regex/i)
     expect(text).toMatch(/include|file.*pattern/i)
+  })
+
+  test("grep.txt encourages parallel issuance for independent searches", () => {
+    const text = readPrompt("grep.txt", TOOL_DIR)
+    expect(text).toMatch(/parallel|multiple .* (calls|searches) .* (single|same) (turn|message)/i)
+  })
+
+  test("grep.txt documents the 100-match truncation cap so the model expects it", () => {
+    const text = readPrompt("grep.txt", TOOL_DIR)
+    expect(text).toMatch(/\b100\b|\bcap\b|truncat/i)
   })
 })
 
@@ -199,9 +227,33 @@ describe("tool description structural completeness — every tool .txt is valid"
     expect(text).toMatch(/offset|limit|line/i)
   })
 
+  test("read.txt documents both offset AND limit parameters explicitly", () => {
+    const text = readPrompt("read.txt", TOOL_DIR)
+    // The current desc only mentions offset by name; limit is the override knob for
+    // the default 2000-line window and the model needs to know it exists.
+    expect(text).toMatch(/\boffset\b/)
+    expect(text).toMatch(/\blimit\b/)
+  })
+
+  test("read.txt retains parallel-read encouragement", () => {
+    const text = readPrompt("read.txt", TOOL_DIR)
+    expect(text).toMatch(/parallel|multiple files/i)
+  })
+
   test("glob.txt mentions pattern matching", () => {
     const text = readPrompt("glob.txt", TOOL_DIR)
     expect(text).toMatch(/pattern|glob/i)
+  })
+
+  test("glob.txt retains parallel batching guidance", () => {
+    const text = readPrompt("glob.txt", TOOL_DIR)
+    expect(text).toMatch(/multiple tools? in a single response|parallel|batch/i)
+  })
+
+  test("glob.txt documents the 100-result truncation cap", () => {
+    const text = readPrompt("glob.txt", TOOL_DIR)
+    // Use word-boundary "cap" to avoid matching "capability" / "captured".
+    expect(text).toMatch(/\b100\b|\bcap\b|truncat/i)
   })
 
   test("todowrite.txt mentions tracking / planning role", () => {
