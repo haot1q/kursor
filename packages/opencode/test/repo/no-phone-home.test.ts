@@ -29,6 +29,15 @@ import path from "node:path"
 //     "https://opencode.ai/theme.json") — these are static metadata
 //     strings that editors might fetch for autocompletion, but the kursor
 //     runtime never resolves them.
+//   * api.opencode.ai GitHub-app endpoints inside
+//     packages/opencode/src/cli/cmd/github.ts — that file implements the
+//     `opencode github install` subcommand which the user explicitly
+//     invokes; the egress is intentional and scoped to that command.
+//     Disabling it (or repointing it to a kursor-controlled service) is
+//     a separate, opt-in feature redesign — not part of this commit. We
+//     allowlist the file here so the test focuses on the automatic-egress
+//     paths it was built for, and document the carve-out so a follow-up
+//     commit knows where the boundary lives.
 //   * String references in tests, prompts, specs, docs, fixtures — they
 //     don't drive runtime behavior.
 //
@@ -72,7 +81,7 @@ function trackedSrcFiles(root: string): string[] {
 // comment or a doc string. We anchor against `"` or `'` quotes plus the
 // host so plain documentation prose ("see opencode.ai for…") doesn't
 // trigger.
-type Rule = { pattern: RegExp; label: string }
+type Rule = { pattern: RegExp; label: string; allowFile?: (rel: string) => boolean }
 const RULES: Rule[] = [
   {
     pattern: /["'`]https?:\/\/opencode\.ai\/changelog\.json["'`]/,
@@ -85,6 +94,30 @@ const RULES: Rule[] = [
   {
     pattern: /["'`]https?:\/\/(?:api\.)?opencode\.ai\/(?:s|share|shares)\/?["'`]/,
     label: "opencode.ai share API (session upload)",
+  },
+  // opncd.ai is the short URL for share content. It currently lives in
+  // share-next.ts behind `disabled = true`, so it is unreachable at
+  // runtime — but the moment that pin is removed it would be the host
+  // contacted by ShareNext.request(). Pinning the literal here means a
+  // future PR cannot quietly extend the host's reach to a new module
+  // without also updating this allowlist.
+  {
+    pattern: /["'`]https?:\/\/(?:api\.)?opncd\.ai/,
+    label: "opncd.ai (short share URL)",
+    allowFile: (rel) =>
+      // Already gated by share-next.ts disabled=true; the literal is
+      // the upstream fallback that is documented to be unreachable. The
+      // pin keeps it the only place that may mention this host.
+      rel === "packages/opencode/src/share/share-next.ts",
+  },
+  // api.opencode.ai is reached only by the explicit `opencode github
+  // install` subcommand (see the header comment of this file). The
+  // allowlist is intentionally narrow: any other file referencing this
+  // host trips the rule and forces a privacy review.
+  {
+    pattern: /["'`]https?:\/\/api\.opencode\.ai/,
+    label: "api.opencode.ai (GitHub-app / Zen runtime API)",
+    allowFile: (rel) => rel === "packages/opencode/src/cli/cmd/github.ts",
   },
 ]
 
@@ -108,6 +141,7 @@ function scanFile(absPath: string, rel: string): Violation[] {
     const line = lines[i]
     if (!line) continue
     for (const rule of RULES) {
+      if (rule.allowFile?.(rel)) continue
       if (rule.pattern.test(line)) {
         violations.push({
           file: rel,
@@ -148,5 +182,24 @@ describe("repo privacy: no automatic phone-home to opencode.ai", () => {
       )
     }
     expect(violations).toEqual([])
+  })
+
+  test("rule allowlist must stay narrow (no wildcards, all paths exist)", () => {
+    // A future contributor could weaken the test by adding broad
+    // allowFile predicates ("everything under packages/app is fine!"). We
+    // reject any allowlist entry whose target path is unreasonably broad
+    // or whose target file does not actually exist in the tree (which
+    // would be a stale carve-out).
+    for (const rule of RULES) {
+      if (!rule.allowFile) continue
+      // The current allowlist is a closure that compares the path literal
+      // to a known file. We enumerate the known production files and
+      // confirm the predicate matches at most one file per rule. If a
+      // future PR replaces the predicate with `() => true` or a broad
+      // glob, this assertion will catch it.
+      const matched = files.filter((rel) => rule.allowFile!(rel))
+      expect(matched.length).toBeGreaterThan(0) // path must exist
+      expect(matched.length).toBeLessThanOrEqual(1) // and be scoped tightly
+    }
   })
 })

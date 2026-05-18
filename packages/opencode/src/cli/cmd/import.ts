@@ -1,11 +1,10 @@
 import type { Session as SDKSession, Message, Part } from "@opencode-ai/sdk/v2"
 import { Session } from "@/session/session"
 import { MessageV2 } from "../../session/message-v2"
-import { CliError, effectCmd } from "../effect-cmd"
+import { effectCmd } from "../effect-cmd"
 import { Database } from "@/storage/db"
 import { SessionTable, MessageTable, PartTable } from "../../session/session.sql"
 import { InstanceRef } from "@/effect/instance-ref"
-import { ShareNext } from "@/share/share-next"
 import { EOL } from "os"
 import { Filesystem } from "@/util/filesystem"
 import { Effect, Schema } from "effect"
@@ -94,73 +93,36 @@ export const ImportCommand = effectCmd({
 })
 
 const runImport = Effect.fn("Cli.import.body")(function* (file: string, projectID: string) {
-  const share = yield* ShareNext.Service
-
-  let exportData: ExportData | undefined
-
   const isUrl = file.startsWith("http://") || file.startsWith("https://")
 
   if (isUrl) {
-    const slug = parseShareUrl(file)
-    if (!slug) {
-      const baseUrl = yield* Effect.orDie(share.url())
-      process.stdout.write(`Invalid URL format. Expected: ${baseUrl}/share/<slug>`)
-      process.stdout.write(EOL)
-      return
-    }
-
-    const baseUrl = new URL(file).origin
-    const req = yield* Effect.orDie(share.request())
-    const headers = shouldAttachShareAuthHeaders(file, req.baseUrl) ? req.headers : {}
-
-    const tryFetch = (url: string) =>
-      Effect.tryPromise({
-        try: () => fetch(url, { headers }),
-        catch: (e) =>
-          new CliError({
-            message: `Failed to fetch share data: ${e instanceof Error ? e.message : String(e)}`,
-          }),
-      })
-
-    const dataPath = req.api.data(slug)
-    let response = yield* tryFetch(`${baseUrl}${dataPath}`)
-
-    if (!response.ok && dataPath !== `/api/share/${slug}/data`) {
-      response = yield* tryFetch(`${baseUrl}/api/share/${slug}/data`)
-    }
-
-    if (!response.ok) {
-      process.stdout.write(`Failed to fetch share data: ${response.statusText}`)
-      process.stdout.write(EOL)
-      return
-    }
-
-    const shareData = yield* Effect.tryPromise({
-      try: () => response.json() as Promise<ShareData[]>,
-      catch: () => new CliError({ message: "Share data was not valid JSON" }),
-    })
-    const transformed = transformShareData(shareData)
-
-    if (!transformed) {
-      process.stdout.write(`Share not found or empty: ${slug}`)
-      process.stdout.write(EOL)
-      return
-    }
-
-    exportData = transformed
-  } else {
-    exportData = yield* Effect.promise(() =>
-      Filesystem.readJson<NonNullable<typeof exportData>>(file).catch(() => undefined),
+    // Privacy: kursor disables session sharing end-to-end (see
+    // packages/opencode/src/share/share-next.ts and
+    // packages/opencode/src/config/config.ts). URL-based import is part of
+    // the share feature — it issued a GET against the share API origin
+    // and would otherwise leak the user's IP + User-Agent + the share
+    // secret to a third-party service. The disabled short-circuits inside
+    // ShareNext only guard create / sync / remove; this CLI path called
+    // `fetch()` directly and would bypass them. Refusing here keeps the
+    // disabled guarantee end to end. Local-file import below is
+    // unaffected: it touches only the user's own disk and never the
+    // network. parseShareUrl, shouldAttachShareAuthHeaders, and
+    // transformShareData remain exported and unit-tested so any future
+    // local-only share-data round-trip can reuse them without
+    // re-introducing the network call.
+    process.stdout.write(
+      "URL-based import is disabled in kursor for privacy: no session content is fetched from remote services. " +
+        "Use a local JSON file path instead.",
     )
-    if (!exportData) {
-      process.stdout.write(`File not found: ${file}`)
-      process.stdout.write(EOL)
-      return
-    }
+    process.stdout.write(EOL)
+    return
   }
 
+  const exportData: ExportData | undefined = yield* Effect.promise(() =>
+    Filesystem.readJson<ExportData>(file).catch(() => undefined),
+  )
   if (!exportData) {
-    process.stdout.write(`Failed to read session data`)
+    process.stdout.write(`File not found: ${file}`)
     process.stdout.write(EOL)
     return
   }

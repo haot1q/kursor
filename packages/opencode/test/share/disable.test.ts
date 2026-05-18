@@ -64,4 +64,43 @@ describe("share is unconditionally disabled in kursor", () => {
     // migration so it wins regardless of upstream defaults.
     expect(source).toMatch(/result\.share\s*=\s*["']disabled["']/)
   })
+
+  test("SessionShare wrapper throws on disabled config BEFORE calling ShareNext", () => {
+    // packages/opencode/src/share/session.ts wraps ShareNext with a
+    // config-aware share() that performs an explicit `conf.share ===
+    // "disabled"` check and throws BEFORE delegating to
+    // shareNext.create(). That guard is what the HTTP API handler relies
+    // on: handlers/session.ts maps the thrown error to an InternalServer
+    // response so the network egress is short-circuited at the public
+    // boundary, not just at the inner ShareNext layer.
+    //
+    // If a refactor moves the call to shareNext.create() above the guard
+    // (or drops the throw), the disabled config would no longer block the
+    // HTTP entry point — only the inner `disabled = true` pin would. That
+    // would still hold (defense in depth), but the layered guarantee that
+    // we document for security review would be silently weakened. Pin
+    // the structural ordering at the source level.
+    const source = fs.readFileSync(
+      path.join(root, "packages/opencode/src/share/session.ts"),
+      "utf8",
+    )
+
+    // The guard literal still exists.
+    expect(source).toMatch(/conf\.share\s*===\s*["']disabled["']\s*\)\s*throw/)
+
+    // Ordering invariant: the throw on disabled config must precede the
+    // first call to shareNext.create / shareNext.remove in the file. We
+    // verify by locating the indices of both patterns and asserting the
+    // throw comes first. Splice out comments first so a "// shareNext.create"
+    // reference cannot fool the check.
+    const stripped = source
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n")
+    const guardIdx = stripped.search(/conf\.share\s*===\s*["']disabled["']\s*\)\s*throw/)
+    const callIdx = stripped.search(/shareNext\.create\s*\(/)
+    expect(guardIdx).toBeGreaterThan(-1)
+    expect(callIdx).toBeGreaterThan(-1)
+    expect(guardIdx).toBeLessThan(callIdx)
+  })
 })

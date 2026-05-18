@@ -16,18 +16,13 @@ import { messageAgentColor } from "@/utils/agent"
 import { sessionTitle } from "@/utils/session-title"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
 import { childSessionOnPath, hasProjectPermissions } from "./helpers"
+import { getProjectAvatarSource } from "./avatar-source"
 
-// Previously this function hard-recognized the upstream opencode repo by its
-// first-commit SHA and substituted https://opencode.ai/favicon.svg as the
-// project avatar. That branch (a) phoned home to opencode.ai every time
-// the upstream repo happened to be opened in kursor, and (b) misbranded a
-// third-party project with another product's logo. The recognition is
-// removed entirely — kursor projects fall through to their configured icon.
-export function getProjectAvatarSource(_id?: string, icon?: { color?: string; url?: string; override?: string }) {
-  if (icon?.override) return icon?.override
-  if (icon?.color) return undefined
-  return icon?.url
-}
+// Re-export so existing import sites (`from "@/pages/layout/sidebar-items"`)
+// keep working. The implementation lives in ./avatar-source so its unit
+// test does not have to depend on the full Solid + Kobalte UI tree this
+// file imports.
+export { getProjectAvatarSource }
 
 export const ProjectIcon = (props: {
   project: LocalProject

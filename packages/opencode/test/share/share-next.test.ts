@@ -210,6 +210,31 @@ describe("ShareNext", () => {
     ),
   )
 
+  it.live("init() is a no-op when disabled (no bus subscriptions, no HTTP)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        // If init() forgot to short-circuit on `disabled`, the state
+        // bootstrap would set up bus.subscribe(...) listeners for
+        // Session.Event.Updated, MessageV2.Event.Updated, etc. Those
+        // listeners would in turn call sync()/flush() and (without the
+        // disabled guards there) reach the HttpClient. We assert the
+        // outer behavior: init() succeeds, no HTTP request is observed.
+        const seen: string[] = []
+        const client = HttpClient.make((req) => {
+          seen.push(req.url)
+          return Effect.succeed(json(req, { ok: true }))
+        })
+
+        const exit = yield* ShareNext.Service.use((svc) => Effect.exit(svc.init())).pipe(
+          Effect.provide(live(client)),
+        )
+
+        expect(Exit.isSuccess(exit)).toBe(true)
+        expect(seen).toEqual([])
+      }),
+    ),
+  )
+
   it.live("diff events do NOT trigger any sync HTTP call when disabled", () =>
     provideTmpdirInstance(
       () => {
