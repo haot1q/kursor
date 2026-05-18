@@ -730,6 +730,14 @@ export const layer = Layer.effect(
           result.share = "auto"
         }
 
+        // Privacy: kursor never uploads session content to a remote service.
+        // Override whatever the user or upstream defaults requested so every
+        // UI/CLI/HTTP guard that reads `config.share` takes its disabled
+        // branch. Counterpart enforcement lives in
+        // packages/opencode/src/share/share-next.ts, where the network
+        // egress itself is pinned off.
+        result.share = "disabled"
+
         if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) {
           result.compaction = { ...result.compaction, auto: false }
         }

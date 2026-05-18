@@ -143,106 +143,82 @@ describe("ShareNext", () => {
     ),
   )
 
-  it.live("create posts share, persists it, and returns the result", () =>
+  // The four tests below replace upstream's create/remove/sync coverage with
+  // the kursor disabled-mode invariant: every network entry point in
+  // share-next.ts short-circuits and never reaches the HttpClient. We feed
+  // a client that dies on every call (`none`) so any forgotten guard would
+  // crash the test rather than quietly hit a real socket. Behavior of the
+  // `request()` URL builder is still covered by the three tests above
+  // because `request()` is a pure URL/headers constructor without network
+  // side effects.
+
+  it.live("create returns an empty sentinel and makes no HTTP call when disabled", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
           const session = yield* Session.Service.use((svc) => svc.create({ title: "test" }))
-          const seen: HttpClientRequest.HttpClientRequest[] = []
-          const client = HttpClient.make((req) => {
-            seen.push(req)
-            if (req.url.endsWith("/api/share")) {
-              return Effect.succeed(
-                json(req, {
-                  id: "shr_abc",
-                  url: "https://legacy-share.example.com/share/abc",
-                  secret: "sec_123",
-                }),
-              )
-            }
-            return Effect.succeed(json(req, { ok: true }))
-          })
 
           const result = yield* ShareNext.Service.use((svc) => svc.create(session.id)).pipe(
-            Effect.provide(live(client)),
+            Effect.provide(live(none)),
           )
 
-          expect(result.id).toBe("shr_abc")
-          expect(result.url).toBe("https://legacy-share.example.com/share/abc")
-          expect(result.secret).toBe("sec_123")
+          // Privacy invariant: a sentinel share with empty fields, never a
+          // real share record bound to a remote service.
+          expect(result.id).toBe("")
+          expect(result.url).toBe("")
+          expect(result.secret).toBe("")
 
-          const row = share(session.id)
-          expect(row?.id).toBe("shr_abc")
-          expect(row?.url).toBe("https://legacy-share.example.com/share/abc")
-          expect(row?.secret).toBe("sec_123")
-
-          expect(seen).toHaveLength(1)
-          expect(seen[0].method).toBe("POST")
-          expect(seen[0].url).toBe("https://legacy-share.example.com/api/share")
-        }),
-      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
-    ),
-  )
-
-  it.live("remove deletes the persisted share and calls the delete endpoint", () =>
-    provideTmpdirInstance(
-      () =>
-        Effect.gen(function* () {
-          const session = yield* Session.Service.use((svc) => svc.create({ title: "test" }))
-          const seen: HttpClientRequest.HttpClientRequest[] = []
-          const client = HttpClient.make((req) => {
-            seen.push(req)
-            if (req.method === "POST") {
-              return Effect.succeed(
-                json(req, {
-                  id: "shr_abc",
-                  url: "https://legacy-share.example.com/share/abc",
-                  secret: "sec_123",
-                }),
-              )
-            }
-            return Effect.succeed(HttpClientResponse.fromWeb(req, new Response(null, { status: 200 })))
-          })
-
-          yield* Effect.gen(function* () {
-            yield* ShareNext.Service.use((svc) => svc.create(session.id))
-            yield* ShareNext.Service.use((svc) => svc.remove(session.id))
-          }).pipe(Effect.provide(live(client)))
-
+          // No DB write — the disabled branch returns before the insert.
           expect(share(session.id)).toBeUndefined()
-          expect(seen.map((req) => [req.method, req.url])).toEqual([
-            ["POST", "https://legacy-share.example.com/api/share"],
-            ["DELETE", "https://legacy-share.example.com/api/share/shr_abc"],
-          ])
         }),
       { config: { enterprise: { url: "https://legacy-share.example.com" } } },
     ),
   )
 
-  it.live("create fails on a non-ok response and does not persist a share", () =>
+  it.live("remove no-ops and makes no HTTP call when disabled", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const session = yield* Session.Service.use((svc) => svc.create({ title: "test" }))
+
+        const exit = yield* ShareNext.Service.use((svc) => Effect.exit(svc.remove(session.id))).pipe(
+          Effect.provide(live(none)),
+        )
+
+        // Succeeds with no work done — neither HTTP nor DB writes happen.
+        expect(Exit.isSuccess(exit)).toBe(true)
+        expect(share(session.id)).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("create cannot fail via remote response when disabled (short-circuit precedes HTTP)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service.use((svc) => svc.create({ title: "test" }))
+
+        // A client that would 500 if reached — used to assert that the
+        // disabled branch returns BEFORE any HTTP request is built.
         const client = HttpClient.make((req) => Effect.succeed(json(req, { error: "bad" }, 500)))
 
         const exit = yield* ShareNext.Service.use((svc) => Effect.exit(svc.create(session.id))).pipe(
           Effect.provide(live(client)),
         )
 
-        expect(Exit.isFailure(exit)).toBe(true)
+        expect(Exit.isSuccess(exit)).toBe(true)
         expect(share(session.id)).toBeUndefined()
       }),
     ),
   )
 
-  it.live("ShareNext coalesces rapid diff events into one delayed sync with latest data", () =>
+  it.live("diff events do NOT trigger any sync HTTP call when disabled", () =>
     provideTmpdirInstance(
       () => {
-        const seen: Array<{ url: string; body: string }> = []
+        const seen: string[] = []
+        // Record any URL the client is ever asked to hit. If the disabled
+        // branch in share-next.ts is removed, the sync path would fire on
+        // every diff event and this list would become non-empty.
         const client = HttpClient.make((req) => {
-          if (req.url.endsWith("/sync") && req.body._tag === "Uint8Array") {
-            seen.push({ url: req.url, body: new TextDecoder().decode(req.body.body) })
-          }
+          seen.push(req.url)
           return Effect.succeed(json(req, { ok: true }))
         })
 
@@ -254,6 +230,9 @@ describe("ShareNext", () => {
           const info = yield* session.create({ title: "first" })
           yield* share.init()
           yield* Effect.sleep(50)
+
+          // Even if a stale share row exists in the DB, the disabled
+          // branch must not act on it.
           yield* Effect.sync(() =>
             Database.use((db) =>
               db
@@ -281,50 +260,9 @@ describe("ShareNext", () => {
               },
             ],
           })
-          yield* bus.publish(Session.Event.Diff, {
-            sessionID: info.id,
-            diff: [
-              {
-                file: "b.ts",
-                patch:
-                  "Index: b.ts\n===================================================================\n--- b.ts\t\n+++ b.ts\t\n@@ -1,1 +1,1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n",
-                additions: 2,
-                deletions: 0,
-                status: "modified",
-              },
-            ],
-          })
           yield* Effect.sleep(1_250)
 
-          expect(seen).toHaveLength(1)
-          expect(seen[0].url).toBe("https://legacy-share.example.com/api/share/shr_abc/sync")
-
-          const body = JSON.parse(seen[0].body) as {
-            secret: string
-            data: Array<{
-              type: string
-              data: Array<{
-                file: string
-                patch: string
-                additions: number
-                deletions: number
-                status?: string
-              }>
-            }>
-          }
-          expect(body.secret).toBe("sec_123")
-          expect(body.data).toHaveLength(1)
-          expect(body.data[0].type).toBe("session_diff")
-          expect(body.data[0].data).toEqual([
-            {
-              file: "b.ts",
-              patch:
-                "Index: b.ts\n===================================================================\n--- b.ts\t\n+++ b.ts\t\n@@ -1,1 +1,1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n",
-              additions: 2,
-              deletions: 0,
-              status: "modified",
-            },
-          ])
+          expect(seen).toEqual([])
         }).pipe(Effect.provide(wired(client)))
       },
       { config: { enterprise: { url: "https://legacy-share.example.com" } } },

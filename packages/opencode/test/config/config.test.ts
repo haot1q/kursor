@@ -727,7 +727,13 @@ test("handles command configuration", async () => {
   })
 })
 
-test("migrates autoshare to share field", async () => {
+test("migrates autoshare to share field, but kursor pins share=disabled", async () => {
+  // The legacy autoshare → share migration runs (autoshare is preserved),
+  // but kursor's privacy override (see packages/opencode/src/config/
+  // config.ts) forces the resolved share value to "disabled" so no user
+  // configuration can opt back into uploading session content. Both the
+  // migration and the override are part of the invariant — losing either
+  // would silently re-enable share for some users.
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -743,8 +749,54 @@ test("migrates autoshare to share field", async () => {
     directory: tmp.path,
     fn: async () => {
       const config = await load()
-      expect(config.share).toBe("auto")
+      expect(config.share).toBe("disabled")
       expect(config.autoshare).toBe(true)
+    },
+  })
+})
+
+test("kursor privacy: explicit share=auto in user config is overridden to disabled", async () => {
+  // Defense-in-depth coverage for the override at packages/opencode/src/
+  // config/config.ts. Even if a user (or a managed/MDM profile, or a
+  // remote config delivery) sets `share: "auto"` directly, the resolved
+  // config must come back as "disabled".
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          share: "auto",
+        }),
+      )
+    },
+  })
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.share).toBe("disabled")
+    },
+  })
+})
+
+test("kursor privacy: explicit share=manual in user config is overridden to disabled", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          share: "manual",
+        }),
+      )
+    },
+  })
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.share).toBe("disabled")
     },
   })
 })

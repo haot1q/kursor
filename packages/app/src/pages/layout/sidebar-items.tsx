@@ -17,10 +17,13 @@ import { sessionTitle } from "@/utils/session-title"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
 import { childSessionOnPath, hasProjectPermissions } from "./helpers"
 
-const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
-
-export function getProjectAvatarSource(id?: string, icon?: { color?: string; url?: string; override?: string }) {
-  if (id === OPENCODE_PROJECT_ID) return "https://opencode.ai/favicon.svg"
+// Previously this function hard-recognized the upstream opencode repo by its
+// first-commit SHA and substituted https://opencode.ai/favicon.svg as the
+// project avatar. That branch (a) phoned home to opencode.ai every time
+// the upstream repo happened to be opened in kursor, and (b) misbranded a
+// third-party project with another product's logo. The recognition is
+// removed entirely — kursor projects fall through to their configured icon.
+export function getProjectAvatarSource(_id?: string, icon?: { color?: string; url?: string; override?: string }) {
   if (icon?.override) return icon?.override
   if (icon?.color) return undefined
   return icon?.url

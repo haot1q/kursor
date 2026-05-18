@@ -209,9 +209,10 @@ const createPlatform = (): Platform => {
       const focused = await window.api.getWindowFocused().catch(() => document.hasFocus())
       if (focused) return
 
+      // Privacy: do NOT specify a remote icon URL. See packages/app/src/
+      // entry.tsx for the rationale (omitting fetches from opencode.ai).
       const notification = new Notification(title, {
         body: description ?? "",
-        icon: "https://opencode.ai/favicon-96x96-v3.png",
       })
       notification.onclick = () => {
         void window.api.showWindow()

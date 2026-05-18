@@ -16,7 +16,16 @@ import * as Log from "@opencode-ai/core/util/log"
 import { SessionShareTable } from "./share.sql"
 
 const log = Log.create({ service: "share-next" })
-const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
+// Privacy: kursor never uploads session content to a remote service. This
+// constant is pinned to `true` so every guarded entry point in this module
+// (init / sync / flush / create / remove / state bootstrap) takes its
+// short-circuit branch. The upstream env-var toggle (OPENCODE_DISABLE_SHARE)
+// is intentionally ignored — flipping a process environment variable must
+// not be enough to re-enable a network egress that kursor has decided to
+// forbid. Counterpart enforcement lives in packages/opencode/src/config/
+// config.ts, which forces `config.share = "disabled"` after merge so every
+// UI/CLI guard reading `config.share` also takes the disabled branch.
+const disabled = true
 
 export type Api = {
   create: string

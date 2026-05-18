@@ -7,7 +7,13 @@ import { useSettings } from "@/context/settings"
 import { persisted } from "@/utils/persist"
 import { DialogReleaseNotes, type Highlight } from "@/components/dialog-release-notes"
 
-const CHANGELOG_URL = "https://opencode.ai/changelog.json"
+// Release-notes dialog used to fetch upstream changelog from
+// https://opencode.ai/changelog.json on every launch. That request leaked
+// "another kursor user just started" to a third-party service. We now skip
+// the network fetch entirely; the user simply does not see an upgrade
+// dialog. A future change can replace this with a bundled local JSON or a
+// kursor-controlled endpoint if we ever decide to surface release notes
+// again.
 
 type Store = {
   version?: string
@@ -164,41 +170,15 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
       setStore("version", platform.version)
     }
 
-    const start = (previous: string) => {
-      if (!settings.general.releaseNotes()) {
-        markSeen()
-        return
-      }
-
-      const fetcher = platform.fetch ?? fetch
-      const controller = new AbortController()
-      onCleanup(() => {
-        controller.abort()
-        clearTimer()
-      })
-
-      fetcher(CHANGELOG_URL, {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      })
-        .then((response) => (response.ok ? (response.json() as Promise<unknown>) : undefined))
-        .then((json) => {
-          if (!json) return
-          const highlights = loadReleaseHighlights(json, platform.version, previous)
-          if (controller.signal.aborted) return
-
-          if (highlights.length === 0) {
-            markSeen()
-            return
-          }
-
-          timer = setTimeout(() => {
-            timer = undefined
-            markSeen()
-            dialog.show(() => <DialogReleaseNotes highlights={highlights} />)
-          }, 500)
-        })
-        .catch(() => undefined)
+    const start = (_previous: string) => {
+      // Privacy: never reach out to a remote changelog endpoint. Just mark
+      // the current version as seen so we don't keep re-prompting. The
+      // dialog branch + supporting helpers (loadReleaseHighlights, parsers,
+      // DialogReleaseNotes) are retained so a future local/bundled
+      // changelog source can plug in here without re-introducing a network
+      // dependency.
+      markSeen()
+      onCleanup(() => clearTimer())
     }
 
     createEffect(() => {

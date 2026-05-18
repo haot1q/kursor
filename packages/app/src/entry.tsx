@@ -67,9 +67,12 @@ const notify: Platform["notify"] = async (title, description, href) => {
   const inView = document.visibilityState === "visible" && document.hasFocus()
   if (inView) return
 
+  // Privacy: do NOT specify a remote icon URL. The previous value fetched
+  // from opencode.ai every time we notified the user, leaking an "active
+  // kursor user" signal to a third-party service. Omitting the field falls
+  // back to the browser/OS default app icon.
   const notification = new Notification(title, {
     body: description ?? "",
-    icon: "https://opencode.ai/favicon-96x96-v3.png",
   })
 
   notification.onclick = () => {
