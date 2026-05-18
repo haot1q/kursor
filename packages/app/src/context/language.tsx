@@ -176,8 +176,16 @@ export function normalizeLocale(value: string): Locale {
 
 function readStoredLocale() {
   if (typeof localStorage !== "object") return
+  // Synchronous read at module load — we cannot wait for the full
+  // persist.ts legacy migration before showing the first frame. Try the
+  // kursor namespace first, then fall back to the opencode-namespaced
+  // legacy key. Note: this function intentionally does not write the
+  // migrated value back; the regular persist layer running shortly
+  // after will do the actual migration via legacyStorageNames. We only
+  // need the value for the warm path.
   try {
-    const raw = localStorage.getItem("opencode.global.dat:language")
+    const raw =
+      localStorage.getItem("kursor.global.dat:language") ?? localStorage.getItem("opencode.global.dat:language")
     if (!raw) return
     const next = JSON.parse(raw) as { locale?: string }
     if (typeof next?.locale !== "string") return

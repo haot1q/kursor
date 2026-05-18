@@ -21,9 +21,34 @@ type PersistTarget = {
   migrate?: (value: unknown) => unknown
 }
 
+// The original-original legacy storage from the Tauri era. Tauri stored
+// everything in a single bag called "default.dat"; the upstream opencode
+// build split it into per-namespace bags (global / workspace). kursor
+// inherits both: when a user's data lives in default.dat, the persist
+// layer reads it once and copies it into the current per-namespace store.
 const LEGACY_STORAGE = "default.dat"
-const GLOBAL_STORAGE = "opencode.global.dat"
-const LOCAL_PREFIX = "opencode."
+
+// kursor namespace. All NEW reads/writes go here. The rename from
+// "opencode.global.dat" / "opencode." was done to (a) isolate kursor data
+// from a side-by-side opencode install on the same machine, and (b)
+// avoid silently inheriting upstream-mixed state.
+const GLOBAL_STORAGE = "kursor.global.dat"
+const LOCAL_PREFIX = "kursor."
+
+// Upstream-opencode namespace that kursor inherits from. The rules:
+//   * Never write here. Writes always go to the kursor namespace above.
+//   * On read, if the kursor key is empty, we read the opencode key
+//     ONCE, copy it into kursor, then remove it from opencode. This
+//     migration is driven by the existing legacy-fallback machinery
+//     (legacyStorageNames + legacy[]) — see Persist.global /
+//     Persist.workspace below — so the rename is transparent to every
+//     caller in the codebase.
+//   * Eviction (quota-pressure path) cleans BOTH prefixes. Otherwise a
+//     stale opencode-namespaced entry could lock kursor out of
+//     localStorage forever.
+const LEGACY_OPENCODE_GLOBAL_STORAGE = "opencode.global.dat"
+const LEGACY_OPENCODE_PREFIX = "opencode."
+const EVICTABLE_PREFIXES = [LOCAL_PREFIX, LEGACY_OPENCODE_PREFIX]
 const fallback = new Map<string, boolean>()
 
 const CACHE_MAX_ENTRIES = 500
@@ -113,7 +138,11 @@ function evict(storage: Storage, keep: string, value: string) {
   for (const index of indexes) {
     const name = storage.key(index)
     if (!name) continue
-    if (!name.startsWith(LOCAL_PREFIX)) continue
+    // Evict entries from BOTH the kursor prefix (current) and the
+    // opencode prefix (legacy). Without the second prefix, a localStorage
+    // dominated by stale opencode-namespaced entries would refuse any
+    // kursor write — the rename would deadlock quota-pressured browsers.
+    if (!EVICTABLE_PREFIXES.some((p) => name.startsWith(p))) continue
     if (name === keep) continue
     const stored = storage.getItem(name)
     items.push({ key: name, size: stored?.length ?? 0 })
@@ -337,12 +366,24 @@ async function migrateLegacyAsync(input: {
 function workspaceStorage(dir: string) {
   const head = (dir.slice(0, 12) || "workspace").replace(/[^a-zA-Z0-9._-]/g, "-")
   const sum = checksum(dir) ?? "0"
+  return `kursor.workspace.${head}.${sum}.dat`
+}
+
+// The opencode-namespaced predecessor of workspaceStorage. We never write
+// here; it's only consulted as a legacy source on the first read after
+// a user upgrades from upstream opencode.
+function legacyOpencodeWorkspaceStorage(dir: string) {
+  const head = (dir.slice(0, 12) || "workspace").replace(/[^a-zA-Z0-9._-]/g, "-")
+  const sum = checksum(dir) ?? "0"
   return `opencode.workspace.${head}.${sum}.dat`
 }
 
 function legacyWorkspaceStorage(dir: string) {
   const storage = workspaceStorage(pathKey(dir))
   const result = new Set<string>()
+
+  // Same-product legacy variants (path normalization edge cases that
+  // already existed in upstream opencode and continue to apply here).
   const raw = workspaceStorage(dir)
   if (raw !== storage) result.add(raw)
 
@@ -352,6 +393,19 @@ function legacyWorkspaceStorage(dir: string) {
     const backslash = workspaceStorage(key.replaceAll("/", "\\"))
     if (backslash !== storage) result.add(backslash)
   }
+
+  // Cross-product legacy variants (opencode-namespaced). Every kursor
+  // workspace name has a direct opencode predecessor. Including the
+  // path-normalization variants in opencode form too so a Windows user
+  // who upgraded across the rename does not lose data because of
+  // forward/back slashes.
+  result.add(legacyOpencodeWorkspaceStorage(pathKey(dir)))
+  result.add(legacyOpencodeWorkspaceStorage(dir))
+  if (drive) {
+    result.add(legacyOpencodeWorkspaceStorage(key.replaceAll("/", "\\")))
+  }
+  // Never include the current store as its own legacy fallback.
+  result.delete(storage)
 
   if (result.size === 0) return
   return [...result]
@@ -450,11 +504,25 @@ export const PersistTesting = {
   migrateLegacy,
   normalize,
   workspaceStorage,
+  legacyOpencodeWorkspaceStorage,
+  // Constants exposed for invariant tests. Renaming these without
+  // updating the corresponding tests fails the privacy/data-namespace
+  // assertions in persist.namespace.test.ts.
+  GLOBAL_STORAGE,
+  LOCAL_PREFIX,
+  LEGACY_OPENCODE_GLOBAL_STORAGE,
+  LEGACY_OPENCODE_PREFIX,
 }
 
 export const Persist = {
   global(key: string, legacy?: string[]): PersistTarget {
-    return { storage: GLOBAL_STORAGE, key, legacy }
+    // legacyStorageNames includes the opencode-namespaced global store so
+    // that a user upgrading across the rename keeps every previously
+    // persisted setting (theme, language, layout, debug-bar position,
+    // and so on). The persist machinery reads the legacy store once,
+    // writes the value into the kursor store, then removes it from
+    // opencode — see migrateLegacy() above.
+    return { storage: GLOBAL_STORAGE, legacyStorageNames: [LEGACY_OPENCODE_GLOBAL_STORAGE], key, legacy }
   },
   workspace(dir: string, key: string, legacy?: string[]): PersistTarget {
     const storage = workspaceStorage(pathKey(dir))

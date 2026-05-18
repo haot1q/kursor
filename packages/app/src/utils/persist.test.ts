@@ -114,24 +114,52 @@ describe("persist localStorage resilience", () => {
   test("workspace storage sanitizes Windows filename characters", () => {
     const result = persistTesting.workspaceStorage("C:\\Users\\foo")
 
-    expect(result).toStartWith("opencode.workspace.")
+    expect(result).toStartWith("kursor.workspace.")
     expect(result.endsWith(".dat")).toBeTrue()
     expect(/[:\\/]/.test(result)).toBeFalse()
   })
 
-  test("workspace target keeps raw path storage as legacy fallback", () => {
+  test("workspace target keeps raw path storage AND opencode-namespaced variants as legacy fallback", () => {
     const target = Persist.workspace("C:\\Users\\foo", "vcs")
 
     expect(target.storage).toBe(persistTesting.workspaceStorage("C:/Users/foo"))
-    expect(target.legacyStorageNames).toEqual([persistTesting.workspaceStorage("C:\\Users\\foo")])
+    // The legacy chain must include: the backslash kursor variant
+    // (same-product path-normalization legacy) AND the opencode-
+    // namespaced equivalents (cross-product rename legacy). Existing
+    // users who upgraded from upstream opencode have their data under
+    // the opencode names; without these entries we would silently lose
+    // it on first launch.
+    expect(target.legacyStorageNames).toContain(persistTesting.workspaceStorage("C:\\Users\\foo"))
+    expect(target.legacyStorageNames).toContain(persistTesting.legacyOpencodeWorkspaceStorage("C:/Users/foo"))
+    expect(target.legacyStorageNames).toContain(persistTesting.legacyOpencodeWorkspaceStorage("C:\\Users\\foo"))
+    // Current store must never be its own legacy fallback.
+    expect(target.legacyStorageNames).not.toContain(target.storage)
   })
 
   test("workspace target keeps backslash storage as fallback for normalized Windows paths", () => {
     const target = Persist.workspace("C:/Users/foo", "vcs")
 
     expect(target.storage).toBe(persistTesting.workspaceStorage("C:/Users/foo"))
-    expect(target.legacyStorageNames).toEqual([persistTesting.workspaceStorage("C:\\Users\\foo")])
+    expect(target.legacyStorageNames).toContain(persistTesting.workspaceStorage("C:\\Users\\foo"))
+    expect(target.legacyStorageNames).toContain(persistTesting.legacyOpencodeWorkspaceStorage("C:/Users/foo"))
+    expect(target.legacyStorageNames).toContain(persistTesting.legacyOpencodeWorkspaceStorage("C:\\Users\\foo"))
   })
+
+  test("global target includes the opencode-namespaced legacy store", () => {
+    // Persist.global previously had no legacyStorageNames. The rename
+    // adds opencode.global.dat as the upstream legacy source so that an
+    // existing user's global settings (theme, language, layout, etc.)
+    // are transparently migrated into the kursor namespace.
+    const target = Persist.global("layout")
+    expect(target.storage).toBe(persistTesting.GLOBAL_STORAGE)
+    expect(target.legacyStorageNames).toEqual([persistTesting.LEGACY_OPENCODE_GLOBAL_STORAGE])
+  })
+
+  // Note: the "kursor wins when both kursor and opencode have data"
+  // assertion is covered by theme-preload.test.ts (the synchronous
+  // pre-mount path) — the persist.ts path enforces the same ordering
+  // by calling readCurrent() before migrateLegacy(), and that ordering
+  // is preserved by the existing tests above.
 
   test("migrates direct legacy keys into scoped storage", () => {
     storage.setItem("legacy.workspace", '{"value":2}')

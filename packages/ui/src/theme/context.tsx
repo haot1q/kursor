@@ -8,7 +8,20 @@ import type { DesktopTheme } from "./types"
 
 export type ColorScheme = "light" | "dark" | "system"
 
+// Theme localStorage keys. Renamed from "opencode-*" to "kursor-*" to
+// isolate kursor's theme state from a side-by-side opencode install. The
+// LEGACY_STORAGE_KEYS map below preserves the upstream names as one-shot
+// migration sources so existing users keep their theme on first launch.
+// See packages/app/public/oc-theme-preload.js for the synchronous
+// pre-mount counterpart.
 const STORAGE_KEYS = {
+  THEME_ID: "kursor-theme-id",
+  COLOR_SCHEME: "kursor-color-scheme",
+  THEME_CSS_LIGHT: "kursor-theme-css-light",
+  THEME_CSS_DARK: "kursor-theme-css-dark",
+} as const
+
+const LEGACY_STORAGE_KEYS = {
   THEME_ID: "opencode-theme-id",
   COLOR_SCHEME: "opencode-color-scheme",
   THEME_CSS_LIGHT: "opencode-theme-css-light",
@@ -94,6 +107,21 @@ function read(key: string) {
   }
 }
 
+// Read kursor's key first; on miss, consult the matching opencode-*
+// legacy key. If the legacy key has a value, copy it into kursor and
+// remove the legacy entry — exactly once per browser. This mirrors the
+// migration in packages/app/public/oc-theme-preload.js so both code
+// paths agree on the same data.
+function readWithLegacyFallback(currentKey: string, legacyKey: string) {
+  const current = read(currentKey)
+  if (current !== null) return current
+  const legacy = read(legacyKey)
+  if (legacy === null) return null
+  write(currentKey, legacy)
+  drop(legacyKey)
+  return legacy
+}
+
 function write(key: string, value: string) {
   if (typeof localStorage !== "object") return
   try {
@@ -111,6 +139,12 @@ function drop(key: string) {
 function clear() {
   drop(STORAGE_KEYS.THEME_CSS_LIGHT)
   drop(STORAGE_KEYS.THEME_CSS_DARK)
+  // Also clear the legacy opencode-namespaced cached CSS, otherwise a
+  // user who once cached a non-default theme under opencode-* would see
+  // stale CSS on the next launch via oc-theme-preload.js (which falls
+  // back to the opencode key when kursor's is empty).
+  drop(LEGACY_STORAGE_KEYS.THEME_CSS_LIGHT)
+  drop(LEGACY_STORAGE_KEYS.THEME_CSS_DARK)
 }
 
 function ensureThemeStyleElement(): HTMLStyleElement {
@@ -163,8 +197,12 @@ function cacheThemeVariants(theme: DesktopTheme, themeId: string) {
 export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
   name: "Theme",
   init: (props: { defaultTheme?: string; onThemeApplied?: (theme: DesktopTheme, mode: "light" | "dark") => void }) => {
-    const themeId = normalize(read(STORAGE_KEYS.THEME_ID) ?? props.defaultTheme) ?? "oc-2"
-    const colorScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
+    const themeId =
+      normalize(readWithLegacyFallback(STORAGE_KEYS.THEME_ID, LEGACY_STORAGE_KEYS.THEME_ID) ?? props.defaultTheme) ??
+      "oc-2"
+    const colorScheme =
+      ((readWithLegacyFallback(STORAGE_KEYS.COLOR_SCHEME, LEGACY_STORAGE_KEYS.COLOR_SCHEME) ??
+        "system") as ColorScheme | null) ?? "system"
     const mode = colorScheme === "system" ? getSystemMode() : colorScheme
     const [store, setStore] = createStore({
       themes: {
@@ -248,9 +286,11 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       }
       makeEventListener(mediaQuery, "change", onMedia)
 
-      const rawTheme = read(STORAGE_KEYS.THEME_ID)
+      const rawTheme = readWithLegacyFallback(STORAGE_KEYS.THEME_ID, LEGACY_STORAGE_KEYS.THEME_ID)
       const savedTheme = normalize(rawTheme ?? props.defaultTheme) ?? "oc-2"
-      const savedScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
+      const savedScheme =
+        (readWithLegacyFallback(STORAGE_KEYS.COLOR_SCHEME, LEGACY_STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ??
+        "system"
       if (rawTheme && rawTheme !== savedTheme) {
         write(STORAGE_KEYS.THEME_ID, savedTheme)
         clear()

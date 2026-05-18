@@ -280,9 +280,16 @@ render(() => {
   const platform = createPlatform()
   const [windowConfig] = createResource(() => window.api.getWindowConfig().catch(() => ({ updaterEnabled: false })))
   const loadLocale = async () => {
-    const current = await platform.storage?.("opencode.global.dat").getItem("language")
-    const legacy = current ? undefined : await platform.storage?.().getItem("language.v1")
-    const raw = current ?? legacy
+    // Try the kursor namespace first, then the upstream opencode-
+    // namespaced store, then the original-original Tauri default store
+    // (via `language.v1`). The full persist.ts pipeline will migrate
+    // any of these into the kursor store on the next regular write,
+    // but here we only need to read the value early enough for the
+    // first paint.
+    const current = await platform.storage?.("kursor.global.dat").getItem("language")
+    const legacyOpencode = current ? undefined : await platform.storage?.("opencode.global.dat").getItem("language")
+    const legacyDefault = current || legacyOpencode ? undefined : await platform.storage?.().getItem("language.v1")
+    const raw = current ?? legacyOpencode ?? legacyDefault
     if (!raw) return
     const locale = raw.match(/"locale"\s*:\s*"([^"]+)"/)?.[1]
     if (!locale) return

@@ -174,7 +174,13 @@ export function initI18n(): Promise<Locale> {
   if (cached) return cached
 
   const promise = (async () => {
-    const raw = await window.api.storeGet("opencode.global.dat", "language").catch(() => null)
+    // Try the kursor-namespaced store first, then fall back to the
+    // opencode-namespaced legacy store. The persist.ts machinery does
+    // the real migration on the next regular write; this i18n bootstrap
+    // only needs to read the locale early enough for the first paint.
+    const raw =
+      (await window.api.storeGet("kursor.global.dat", "language").catch(() => null)) ??
+      (await window.api.storeGet("opencode.global.dat", "language").catch(() => null))
     const value = parseStored(raw)
     const next = pickLocale(value) ?? state.locale
 
