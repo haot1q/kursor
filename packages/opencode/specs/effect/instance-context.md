@@ -305,5 +305,5 @@ Active tracker items:
 
 Dedicated worktree for this transition:
 
-- path: `/Users/kit/code/open-source/opencode-worktrees/instance-effect-shift`
-- branch: `kit/instance-effect-shift`
+- path: `<repo-worktrees>/instance-effect-shift`
+- branch: `instance-effect-shift`

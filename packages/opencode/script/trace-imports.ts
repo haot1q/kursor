@@ -2,7 +2,11 @@
 import * as path from "path"
 import * as ts from "typescript"
 
-const BASE_DIR = "/home/thdxr/dev/projects/anomalyco/opencode/packages/opencode"
+// Resolve relative to this script so the tool works for anyone cloning the
+// repo. The previous hardcoded "/home/<user>/dev/projects/.../packages/opencode"
+// leaked the upstream author's local path into every checkout — a privacy
+// regression that the no-dev-paths invariant test now guards against.
+const BASE_DIR = path.resolve(import.meta.dir, "..")
 
 // Get entry file from command line arg or use default
 const ENTRY_FILE = process.argv[2] || "src/cli/cmd/tui/plugin/index.ts"
