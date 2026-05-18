@@ -13,6 +13,7 @@ import { Context, Data, Effect, Layer, Schema } from "effect"
 import { HttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiMiddleware } from "effect/unstable/httpapi"
 import * as Socket from "effect/unstable/socket/Socket"
+import { homedir } from "node:os"
 
 // Query fields this middleware reads from the URL. Spread into every
 // endpoint query schema in groups that apply WorkspaceRoutingMiddleware,
@@ -69,8 +70,15 @@ function selectedWorkspaceID(url: URL, sessionWorkspaceID?: WorkspaceID): Worksp
   return sessionWorkspaceID ?? (workspaceParam ? WorkspaceID.make(workspaceParam) : undefined)
 }
 
+// Privacy: when no caller-provided directory hint exists, fall back to the
+// current user's home directory rather than the server process's `cwd`.
+// `process.cwd()` would otherwise leak the server's launch directory — for
+// example, anyone starting `kursor serve` from inside the kursor source tree
+// would expose that source tree as the workspace to the Web UI client. Each
+// user instead gets their own `$HOME`, and CLI/programmatic callers can still
+// pin a specific path via `?directory=` or the `x-opencode-directory` header.
 function defaultDirectory(request: HttpServerRequest.HttpServerRequest, url: URL): string {
-  return url.searchParams.get("directory") || request.headers["x-opencode-directory"] || process.cwd()
+  return url.searchParams.get("directory") || request.headers["x-opencode-directory"] || homedir()
 }
 
 function shouldStayOnControlPlane(request: HttpServerRequest.HttpServerRequest, url: URL): boolean {

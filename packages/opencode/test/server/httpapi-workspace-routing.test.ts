@@ -14,6 +14,7 @@ import {
 import * as Socket from "effect/unstable/socket/Socket"
 import Http from "node:http"
 import { mkdir } from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import { registerAdapter } from "../../src/control-plane/adapters"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -453,7 +454,10 @@ describe("HttpApi workspace routing middleware", () => {
       const response = yield* HttpClient.get(`/session?workspace=${workspace.id}`)
 
       expect(response.status).toBe(200)
-      expect(yield* response.json).toEqual({ directory: process.cwd(), workspaceID: workspace.id })
+      // Control-plane routes fall through to defaultDirectory; with no
+      // ?directory= or x-opencode-directory header the privacy fallback is
+      // the caller's $HOME, not the server's launch cwd.
+      expect(yield* response.json).toEqual({ directory: os.homedir(), workspaceID: workspace.id })
     }),
   )
 
@@ -483,7 +487,9 @@ describe("HttpApi workspace routing middleware", () => {
       const response = yield* HttpClient.get(`${WorkspacePaths.list}?workspace=${workspace.id}`)
 
       expect(response.status).toBe(200)
-      expect(yield* response.json).toEqual({ directory: process.cwd(), workspaceID: workspace.id })
+      // Workspace CRUD routes also fall through to defaultDirectory; the
+      // privacy fallback is $HOME, not the server's launch cwd.
+      expect(yield* response.json).toEqual({ directory: os.homedir(), workspaceID: workspace.id })
     }),
   )
 
@@ -495,7 +501,7 @@ describe("HttpApi workspace routing middleware", () => {
       yield* serveRouteContextProbe
 
       // Without a selected workspace, the middleware falls back to request
-      // directory hints before using the process cwd.
+      // directory hints before using the privacy fallback.
       const queryResponse = yield* HttpClient.get(`/probe?directory=${encodeURIComponent(queryDir)}`)
       const headerResponse = yield* HttpClientRequest.get("/probe").pipe(
         HttpClientRequest.setHeader("x-opencode-directory", headerDir),
@@ -507,6 +513,31 @@ describe("HttpApi workspace routing middleware", () => {
       expect(headerResponse.status).toBe(200)
       expect(yield* headerResponse.json).toEqual({ directory: headerDir })
     }),
+  )
+
+  it.live(
+    "privacy: when no directory hint is provided the fallback is $HOME, not process.cwd() — prevents leaking the server's launch directory",
+    () =>
+      Effect.gen(function* () {
+        yield* serveRouteContextProbe
+
+        // No ?directory= and no x-opencode-directory header. The middleware
+        // must NEVER fall back to the server's process.cwd() — that path could
+        // be the kursor source tree (when a user starts `kursor serve` from
+        // within the cloned repo) and exposing it would leak the dev/server
+        // launch directory to every Web UI client.
+        const response = yield* HttpClient.get("/probe")
+
+        expect(response.status).toBe(200)
+        const body = yield* response.json
+        expect(body).toEqual({ directory: os.homedir() })
+        // Defensive: if cwd happens to equal $HOME this still passes via the
+        // primary assertion above; we only need the regression guard when they
+        // actually differ.
+        if (process.cwd() !== os.homedir()) {
+          expect((body as { directory: string }).directory).not.toBe(process.cwd())
+        }
+      }),
   )
 
   it.live("routes local workspace requests through WorkspaceRouteContext", () =>
