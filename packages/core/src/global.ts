@@ -6,7 +6,13 @@ import { Context, Effect, Layer } from "effect"
 import { Flock } from "./util/flock"
 import { Flag } from "./flag/flag"
 
-const app = "opencode"
+// Namespace for all on-disk data. Renamed from the upstream "opencode" so a
+// machine that has both kursor and opencode installed does not silently share
+// session history, project database, auth tokens, or any other state between
+// the two products. New kursor users start with a clean ~/.local/share/kursor;
+// existing opencode data at ~/.local/share/opencode is left untouched and
+// invisible to kursor.
+const app = "kursor"
 const data = path.join(xdgData!, app)
 const cache = path.join(xdgCache!, app)
 const config = path.join(xdgConfig!, app)

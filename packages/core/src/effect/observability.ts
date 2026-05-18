@@ -40,7 +40,7 @@ export function resource(): { serviceName: string; serviceVersion: string; attri
   })()
 
   return {
-    serviceName: "opencode",
+    serviceName: "kursor",
     serviceVersion: InstallationVersion,
     attributes: {
       ...attributes,
