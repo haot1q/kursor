@@ -1,3 +1,4 @@
+import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -11,6 +12,9 @@ const channel = (() => {
   return "dev"
 })()
 
+const nativeDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "native")
+const hasNative = fs.existsSync(nativeDir)
+
 const getBase = (): Configuration => ({
   artifactName: "kursor-desktop-${os}-${arch}.${ext}",
   directories: {
@@ -18,13 +22,15 @@ const getBase = (): Configuration => ({
     buildResources: "resources",
   },
   files: ["out/**/*", "resources/**/*"],
-  extraResources: [
-    {
-      from: "native/",
-      to: "native/",
-      filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
-    },
-  ],
+  extraResources: hasNative
+    ? [
+        {
+          from: "native/",
+          to: "native/",
+          filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
+        },
+      ]
+    : [],
   mac: {
     category: "public.app-category.developer-tools",
     icon: `resources/icons/icon.icns`,
