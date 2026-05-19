@@ -123,8 +123,8 @@ describe("classifyFsFailure", () => {
       // a toast is acceptable. The banner copy must remain a fixed string
       // (no interpolation of path-like content) so anyone shoulder-surfing
       // a screen-share doesn't see the developer's $HOME.
-      const out = classifyFsFailure(new TypeError("Failed to fetch /Users/alice/secret"), "home")
-      expect(out.toast).toContain("/Users/alice/secret")
+      const out = classifyFsFailure(new TypeError("Failed to fetch /Users/test/secret"), "home")
+      expect(out.toast).toContain("/Users/test/secret")
       // Banner echoes the err.message — this is intentional; the banner
       // text is the only place a network failure surfaces persistently.
       // If we ever decide to scrub it, this test will need updating.
@@ -144,28 +144,28 @@ describe("buildShortcutEntries", () => {
 
   test("minimal shortcuts → only Home", () => {
     const shortcuts: FsShortcuts = {
-      home: "/home/alice",
+      home: "/home/test",
       desktop: null,
       documents: null,
       downloads: null,
       mounts: [],
     }
-    expect(buildShortcutEntries(shortcuts)).toEqual([{ label: "Home", path: "/home/alice" }])
+    expect(buildShortcutEntries(shortcuts)).toEqual([{ label: "Home", path: "/home/test" }])
   })
 
   test("full shortcuts → stable order: Home, Desktop, Documents, Downloads, mounts", () => {
     const shortcuts: FsShortcuts = {
-      home: "/home/alice",
-      desktop: "/home/alice/Desktop",
-      documents: "/home/alice/Documents",
-      downloads: "/home/alice/Downloads",
+      home: "/home/test",
+      desktop: "/home/test/Desktop",
+      documents: "/home/test/Documents",
+      downloads: "/home/test/Downloads",
       mounts: ["/mnt/usb", "/mnt/nas"],
     }
     expect(buildShortcutEntries(shortcuts)).toEqual([
-      { label: "Home", path: "/home/alice" },
-      { label: "Desktop", path: "/home/alice/Desktop" },
-      { label: "Documents", path: "/home/alice/Documents" },
-      { label: "Downloads", path: "/home/alice/Downloads" },
+      { label: "Home", path: "/home/test" },
+      { label: "Desktop", path: "/home/test/Desktop" },
+      { label: "Documents", path: "/home/test/Documents" },
+      { label: "Downloads", path: "/home/test/Downloads" },
       { label: "/mnt/usb", path: "/mnt/usb" },
       { label: "/mnt/nas", path: "/mnt/nas" },
     ])
@@ -173,15 +173,15 @@ describe("buildShortcutEntries", () => {
 
   test("missing optional dirs are skipped without throwing", () => {
     const shortcuts: FsShortcuts = {
-      home: "/home/alice",
+      home: "/home/test",
       desktop: null,
-      documents: "/home/alice/Documents",
+      documents: "/home/test/Documents",
       downloads: null,
       mounts: [],
     }
     expect(buildShortcutEntries(shortcuts)).toEqual([
-      { label: "Home", path: "/home/alice" },
-      { label: "Documents", path: "/home/alice/Documents" },
+      { label: "Home", path: "/home/test" },
+      { label: "Documents", path: "/home/test/Documents" },
     ])
   })
 
