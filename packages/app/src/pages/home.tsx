@@ -8,6 +8,7 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { usePlatform } from "@/context/platform"
 import { DateTime } from "luxon"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { DialogBrowseDirectory } from "@/components/dialog-browse-directory"
 import { DialogSelectDirectory } from "@/components/dialog-select-directory"
 import { DialogSelectServer } from "@/components/dialog-select-server"
 import { useServer } from "@/context/server"
@@ -60,6 +61,16 @@ export default function Home() {
         multiple: true,
       })
       resolve(result)
+    } else if (server.isLocal()) {
+      // Browser-only build with same-machine sidecar: the existing
+      // DialogSelectDirectory relies on an instance-scoped /path route that
+      // returns nothing until at least one workspace exists, so the picker
+      // shows up empty for fresh installs. Route this case to the
+      // server-backed /fs/* browser instead.
+      dialog.show(
+        () => <DialogBrowseDirectory multiple={true} onSelect={resolve} />,
+        () => resolve(null),
+      )
     } else {
       dialog.show(
         () => <DialogSelectDirectory multiple={true} onSelect={resolve} />,

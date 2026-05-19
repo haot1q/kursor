@@ -7,6 +7,7 @@ import { ControlApi } from "./groups/control"
 import { EventApi } from "./event"
 import { ExperimentalApi } from "./groups/experimental"
 import { FileApi } from "./groups/file"
+import { FsApi } from "./groups/fs"
 import { GlobalApi } from "./groups/global"
 import { InstanceApi } from "./groups/instance"
 import { McpApi } from "./groups/mcp"
@@ -30,6 +31,7 @@ const SyncEventSchemas = SyncEvent.effectPayloads()
 export const RootHttpApi = HttpApi.make("opencode-root")
   .addHttpApi(ControlApi)
   .addHttpApi(GlobalApi)
+  .addHttpApi(FsApi)
   .middleware(SchemaErrorMiddleware)
   .middleware(Authorization)
 

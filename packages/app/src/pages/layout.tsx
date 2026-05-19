@@ -1488,6 +1488,18 @@ export default function Layout(props: ParentProps) {
         multiple: true,
       })
       resolve(result)
+    } else if (server.isLocal()) {
+      // Browser-only build with same-machine sidecar: use the server-backed
+      // /fs/* browser; the SDK-driven picker below relies on a workspace
+      // already existing and returns an empty list on fresh installs.
+      const run = ++dialogRun
+      void import("@/components/dialog-browse-directory").then((x) => {
+        if (dialogDead || dialogRun !== run) return
+        dialog.show(
+          () => <x.DialogBrowseDirectory multiple={true} onSelect={resolve} />,
+          () => resolve(null),
+        )
+      })
     } else {
       const run = ++dialogRun
       void import("@/components/dialog-select-directory").then((x) => {
