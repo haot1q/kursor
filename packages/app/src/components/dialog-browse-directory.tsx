@@ -95,8 +95,36 @@ export function DialogBrowseDirectory(props: DialogBrowseDirectoryProps) {
 
   // Eagerly load home + shortcuts so the dialog renders with content the
   // moment it opens, rather than flashing an empty state.
-  const [homeInfo] = createResource(() => apiGet<FsHome>("/fs/home"))
-  const [shortcuts] = createResource(() => apiGet<FsShortcuts>("/fs/shortcuts"))
+  //
+  // Defensive: a thrown error inside a createResource fetcher bubbles to the
+  // root ErrorBoundary and tears down the entire app shell. The /fs/* routes
+  // can legitimately fail in dev — most commonly when the sidecar binds
+  // 127.0.0.1 but the browser resolves `localhost` to IPv6 [::1] and the
+  // fetch is refused (TypeError: Failed to fetch). The dialog must degrade
+  // gracefully: show a toast on the FIRST failure, then return null so the
+  // shortcut/home UI simply renders empty, leaving the rest of the app alive
+  // and the typed-path input usable as a fallback. The sibling `listing`
+  // resource already uses this pattern; this commit brings home/shortcuts
+  // in line.
+  const [homeError, setHomeError] = createSignal<string | null>(null)
+  const [homeInfo] = createResource(async () => {
+    try {
+      return await apiGet<FsHome>("/fs/home")
+    } catch (err) {
+      const message = (err as Error).message
+      setHomeError(message)
+      showToast({ title: `Cannot reach server: ${message}` })
+      return null
+    }
+  })
+  const [shortcuts] = createResource(async () => {
+    try {
+      return await apiGet<FsShortcuts>("/fs/shortcuts")
+    } catch {
+      // Already surfaced via homeError; don't double-toast the same root cause.
+      return null
+    }
+  })
 
   const [currentPath, setCurrentPath] = createSignal<string | null>(null)
   const [pathInput, setPathInput] = createSignal("")
@@ -178,6 +206,12 @@ export function DialogBrowseDirectory(props: DialogBrowseDirectoryProps) {
   return (
     <Dialog title={props.title ?? "Open project"}>
       <div class="flex flex-col gap-3 w-full max-w-2xl min-w-md">
+        <Show when={homeError()}>
+          <div class="px-3 py-2 rounded-md border border-border bg-bg-weak text-12-regular text-text-weak">
+            Cannot reach the local server ({homeError()}). Typed paths still work; the shortcut list is hidden until the
+            server responds.
+          </div>
+        </Show>
         <div class="flex items-center gap-2">
           <TextField
             class="flex-1"
