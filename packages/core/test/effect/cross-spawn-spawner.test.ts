@@ -111,7 +111,13 @@ describe("cross-spawn spawner", () => {
             ChildProcess.make(process.execPath, ["-e", "process.stdout.write(process.cwd())"], { cwd: tmp.path }),
           ),
         )
-        expect(out).toBe(tmp.path)
+        // macOS /var is a symlink to /private/var, so os.tmpdir() returns the
+        // unresolved /var/folders/... path but the child's process.cwd()
+        // returns the realpath'd /private/var/folders/... — comparing the
+        // raw strings spuriously fails on Darwin. Compare resolved paths on
+        // both sides so the assertion holds on macOS and Linux alike.
+        const expected = yield* Effect.promise(() => fs.realpath(tmp.path))
+        expect(out).toBe(expected)
       }),
     )
 
