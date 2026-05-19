@@ -16,6 +16,7 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { useServer } from "@/context/server"
+import { buildShortcutEntries, classifyFsFailure, type FsShortcuts } from "./dialog-browse-directory-helpers"
 
 interface FsEntry {
   name: string
@@ -30,14 +31,6 @@ interface FsListResult {
   entries: FsEntry[]
   truncated: boolean
   total: number
-}
-
-interface FsShortcuts {
-  home: string
-  desktop: string | null
-  documents: string | null
-  downloads: string | null
-  mounts: string[]
 }
 
 interface FsHome {
@@ -101,27 +94,48 @@ export function DialogBrowseDirectory(props: DialogBrowseDirectoryProps) {
   // can legitimately fail in dev — most commonly when the sidecar binds
   // 127.0.0.1 but the browser resolves `localhost` to IPv6 [::1] and the
   // fetch is refused (TypeError: Failed to fetch). The dialog must degrade
-  // gracefully: show a toast on the FIRST failure, then return null so the
-  // shortcut/home UI simply renders empty, leaving the rest of the app alive
-  // and the typed-path input usable as a fallback. The sibling `listing`
-  // resource already uses this pattern; this commit brings home/shortcuts
-  // in line.
-  const [homeError, setHomeError] = createSignal<string | null>(null)
+  // gracefully: surface a toast + optional inline banner on failure, then
+  // return null so the rest of the picker (typed-path input, listing)
+  // stays usable. Classification logic lives in helpers so it can be
+  // unit-tested without a DOM.
+  const [bannerMessage, setBannerMessage] = createSignal<string | null>(null)
+  // The two /fs/* resources are launched in parallel and their catch
+  // blocks settle in non-deterministic order. We dedupe banner + toast
+  // emission through plain closures (not signals) so the check-and-set
+  // is synchronous within each catch: whichever lands first claims the
+  // toast, the other becomes a silent no-op for the simultaneous-failure
+  // case (typical of the IPv6 / server-down scenario). If only one route
+  // fails (e.g. /fs/shortcuts returns 500 while /fs/home is fine) the
+  // surviving fetcher still emits its own targeted toast.
+  let bannerClaimed = false
+  let toastClaimed = false
+  const emitBanner = (text: string | null) => {
+    if (bannerClaimed || !text) return
+    bannerClaimed = true
+    setBannerMessage(text)
+  }
+  const emitToast = (title: string) => {
+    if (toastClaimed) return
+    toastClaimed = true
+    showToast({ title })
+  }
   const [homeInfo] = createResource(async () => {
     try {
       return await apiGet<FsHome>("/fs/home")
     } catch (err) {
-      const message = (err as Error).message
-      setHomeError(message)
-      showToast({ title: `Cannot reach server: ${message}` })
+      const failure = classifyFsFailure(err, "home")
+      emitBanner(failure.banner)
+      emitToast(failure.toast)
       return null
     }
   })
   const [shortcuts] = createResource(async () => {
     try {
       return await apiGet<FsShortcuts>("/fs/shortcuts")
-    } catch {
-      // Already surfaced via homeError; don't double-toast the same root cause.
+    } catch (err) {
+      const failure = classifyFsFailure(err, "shortcuts", { suppressBanner: bannerClaimed })
+      emitBanner(failure.banner)
+      emitToast(failure.toast)
       return null
     }
   })
@@ -191,25 +205,14 @@ export function DialogBrowseDirectory(props: DialogBrowseDirectoryProps) {
     dialog.close()
   }
 
-  const shortcutEntries = createMemo(() => {
-    const s = shortcuts()
-    if (!s) return [] as Array<{ label: string; path: string }>
-    const out: Array<{ label: string; path: string }> = []
-    out.push({ label: "Home", path: s.home })
-    if (s.desktop) out.push({ label: "Desktop", path: s.desktop })
-    if (s.documents) out.push({ label: "Documents", path: s.documents })
-    if (s.downloads) out.push({ label: "Downloads", path: s.downloads })
-    for (const m of s.mounts) out.push({ label: m, path: m })
-    return out
-  })
+  const shortcutEntries = createMemo(() => buildShortcutEntries(shortcuts()))
 
   return (
     <Dialog title={props.title ?? "Open project"}>
       <div class="flex flex-col gap-3 w-full max-w-2xl min-w-md">
-        <Show when={homeError()}>
+        <Show when={bannerMessage()}>
           <div class="px-3 py-2 rounded-md border border-border bg-bg-weak text-12-regular text-text-weak">
-            Cannot reach the local server ({homeError()}). Typed paths still work; the shortcut list is hidden until the
-            server responds.
+            {bannerMessage()}
           </div>
         </Show>
         <div class="flex items-center gap-2">
