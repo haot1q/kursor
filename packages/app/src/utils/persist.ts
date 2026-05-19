@@ -502,6 +502,7 @@ export const PersistTesting = {
   localStorageDirect,
   localStorageWithPrefix,
   migrateLegacy,
+  migrateLegacyAsync,
   normalize,
   workspaceStorage,
   legacyOpencodeWorkspaceStorage,

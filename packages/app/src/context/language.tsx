@@ -174,7 +174,11 @@ export function normalizeLocale(value: string): Locale {
   return LOCALES.includes(value as Locale) ? (value as Locale) : "en"
 }
 
-function readStoredLocale() {
+// Exported for testing only. The function is invoked once at module
+// load (see the `warm` constant below), so testing it via side effects
+// would require re-importing the module per assertion. Direct export
+// keeps the test surface small and unambiguous.
+export function readStoredLocale() {
   if (typeof localStorage !== "object") return
   // Synchronous read at module load — we cannot wait for the full
   // persist.ts legacy migration before showing the first frame. Try the
