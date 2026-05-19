@@ -18,6 +18,7 @@ import { Filesystem } from "@/util/filesystem"
 import { disposeAllInstances, provideInstance, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { Reference } from "@/reference/reference"
+import { buildEmptyPagePdf, buildMinimalPdf, buildMultiPagePdf } from "../lib/pdf"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
 
@@ -572,6 +573,146 @@ describe("tool.read loaded instructions", () => {
       expect(result.output).toContain("system-reminder")
       expect(result.output).toContain("Test Instructions")
       expect(result.metadata.loaded).toBeDefined()
+      expect(result.metadata.loaded).toContain(path.join(dir, "subdir", "AGENTS.md"))
+    }),
+  )
+})
+
+describe("tool.read pdf extraction", () => {
+  it.live("extracts text from a simple PDF and returns it inline", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const pdf = buildMinimalPdf("Hello PDF World")
+      yield* put(path.join(dir, "hello.pdf"), pdf)
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "hello.pdf") })
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain("<type>pdf</type>")
+      expect(result.output).toContain("<pages>1</pages>")
+      expect(result.output).toContain("Hello PDF World")
+      expect(result.output).toContain("--- page 1 ---")
+      expect(result.output).toContain("End of PDF — 1 page")
+      expect(result.metadata.truncated).toBe(false)
+    }),
+  )
+
+  it.live("detects PDF by magic bytes even when extension is wrong", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const pdf = buildMinimalPdf("Sniffed via header")
+      yield* put(path.join(dir, "mystery.bin"), pdf)
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "mystery.bin") })
+      expect(result.output).toContain("Sniffed via header")
+      expect(result.output).toContain("<type>pdf</type>")
+    }),
+  )
+
+  it.live("fails clearly on a corrupted PDF", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      // %PDF- header so the read tool routes through the PDF branch, but the
+      // rest is garbage that pdfjs will reject.
+      const corrupted = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from("not a real pdf body")])
+      yield* put(path.join(dir, "broken.pdf"), corrupted)
+
+      const err = yield* fail(dir, { filePath: path.join(dir, "broken.pdf") })
+      expect(err.message).toMatch(/PDF/i)
+    }),
+  )
+
+  it.live("renders all pages with markers in order for a multi-page PDF", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(
+        path.join(dir, "multi.pdf"),
+        buildMultiPagePdf(["first page text", "second page text", "third page text"]),
+      )
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "multi.pdf") })
+      expect(result.output).toContain("<pages>3</pages>")
+      expect(result.output).toContain("--- page 1 ---")
+      expect(result.output).toContain("--- page 2 ---")
+      expect(result.output).toContain("--- page 3 ---")
+      expect(result.output.indexOf("first page text")).toBeLessThan(result.output.indexOf("second page text"))
+      expect(result.output.indexOf("second page text")).toBeLessThan(result.output.indexOf("third page text"))
+      expect(result.output).toContain("End of PDF — 3 pages")
+    }),
+  )
+
+  it.live("slices PDF text by line via offset and limit", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(
+        path.join(dir, "slice.pdf"),
+        buildMultiPagePdf(["alpha", "beta", "gamma"]),
+      )
+
+      // Each page renders as `--- page N ---\n<text>`, so a multi-page PDF
+      // produces a deterministic line layout we can slice.
+      const result = yield* exec(dir, {
+        filePath: path.join(dir, "slice.pdf"),
+        offset: 4,
+        limit: 2,
+      })
+      expect(result.output).toContain("4: ")
+      expect(result.output).toContain("5: ")
+      expect(result.output).not.toContain("1: ")
+      expect(result.output).toContain("Use offset=6 to continue")
+      expect(result.metadata.truncated).toBe(true)
+    }),
+  )
+
+  it.live("errors when offset is past the end of the PDF", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "tiny.pdf"), buildMinimalPdf("just one line"))
+
+      const err = yield* fail(dir, { filePath: path.join(dir, "tiny.pdf"), offset: 9999 })
+      expect(err.message).toMatch(/Offset 9999 is out of range/)
+      expect(err.message).toMatch(/pages/)
+    }),
+  )
+
+  it.live("reports a scanned PDF with no extractable text instead of erroring", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "scanned.pdf"), buildEmptyPagePdf())
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "scanned.pdf") })
+      expect(result.output).toContain("<type>pdf</type>")
+      expect(result.output).toContain("<pages>1</pages>")
+      // The PDF has one content-less page; the only "line" is the page marker.
+      // Output should not claim end-of-file with a huge line count.
+      expect(result.output).not.toMatch(/total \d{3,} lines/)
+    }),
+  )
+
+  it.live("asks for read permission with PDF path before extracting", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      yield* put(path.join(dir, "docs", "report.pdf"), buildMinimalPdf("permission gated"))
+
+      const { items, next } = asks()
+      yield* exec(dir, { filePath: path.join(dir, "docs", "report.pdf") }, next)
+      const read = items.find((item) => item.permission === "read")
+      expect(read).toBeDefined()
+      expect(read!.patterns).toEqual([path.join("docs", "report.pdf")])
+    }),
+  )
+
+  it.live("appends loaded AGENTS.md instructions next to extracted PDF text", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      // Mirror the layout the plain-text AGENTS.md test uses: AGENTS.md lives
+      // in a project subdir and the read target is nested under it.
+      yield* put(path.join(dir, "subdir", "AGENTS.md"), "# PDF Rules\nAlways cite the page number.")
+      yield* put(path.join(dir, "subdir", "nested", "doc.pdf"), buildMinimalPdf("cited content"))
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "subdir", "nested", "doc.pdf") })
+      expect(result.output).toContain("cited content")
+      expect(result.output).toContain("system-reminder")
+      expect(result.output).toContain("PDF Rules")
       expect(result.metadata.loaded).toContain(path.join(dir, "subdir", "AGENTS.md"))
     }),
   )

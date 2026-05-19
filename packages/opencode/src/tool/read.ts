@@ -11,6 +11,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { Instruction } from "../session/instruction"
 import { isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import { extractPdfText } from "@/util/pdf"
 import { Reference } from "@/reference/reference"
 
 const DEFAULT_READ_LIMIT = 2000
@@ -222,9 +223,9 @@ export const ReadTool = Tool.define(
       const mime = sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))
       const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
 
-      if (isImage || isPdfAttachment(mime)) {
+      if (isImage) {
         const bytes = yield* fs.readFile(filepath)
-        const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
+        const msg = "Image read successfully"
         return {
           title,
           output: msg,
@@ -240,6 +241,91 @@ export const ReadTool = Tool.define(
               url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
             },
           ],
+        }
+      }
+
+      if (isPdfAttachment(mime)) {
+        // Extract PDF text locally so every provider can read PDFs, not just
+        // models with native pdf input modality. The byte cap inside
+        // extractPdfText() bounds memory usage.
+        const bytes = yield* fs.readFile(filepath)
+        const extracted = yield* Effect.tryPromise({
+          try: () => extractPdfText(bytes),
+          catch: (cause) =>
+            new Error(`Failed to extract PDF text: ${cause instanceof Error ? cause.message : String(cause)}`),
+        })
+
+        if (extracted.encrypted) {
+          return yield* Effect.fail(
+            new Error(`PDF is password-protected: ${filepath}. Cannot extract text.`),
+          )
+        }
+
+        const limit = params.limit ?? DEFAULT_READ_LIMIT
+        const offset = params.offset || 1
+        const start = offset - 1
+        const allLines = extracted.text.split("\n")
+        const totalLines = allLines.length
+
+        if (totalLines > 0 && start >= totalLines) {
+          return yield* Effect.fail(
+            new Error(`Offset ${offset} is out of range for this PDF (${totalLines} lines, ${extracted.pageCount} pages)`),
+          )
+        }
+
+        const sliced: string[] = []
+        let byteBudget = 0
+        let cut = false
+        let more = false
+        for (let i = start; i < totalLines; i++) {
+          if (sliced.length >= limit) {
+            more = true
+            break
+          }
+          const raw = allLines[i]
+          const line = raw.length > MAX_LINE_LENGTH ? raw.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : raw
+          const size = Buffer.byteLength(line, "utf-8") + (sliced.length > 0 ? 1 : 0)
+          if (byteBudget + size > MAX_BYTES) {
+            cut = true
+            more = true
+            break
+          }
+          sliced.push(line)
+          byteBudget += size
+        }
+
+        let output = [
+          `<path>${filepath}</path>`,
+          `<type>pdf</type>`,
+          `<pages>${extracted.pageCount}</pages>`,
+          "<content>\n",
+        ].join("\n")
+        output += sliced.map((line, i) => `${i + offset}: ${line}`).join("\n")
+        const last = offset + sliced.length - 1
+        const next = last + 1
+        if (sliced.length === 0 && totalLines === 0) {
+          output += `\n(PDF contains no extractable text — it may be a scanned image PDF. ${extracted.pageCount} page${extracted.pageCount === 1 ? "" : "s"}.)`
+        } else if (cut) {
+          output += `\n\n(Output capped at ${MAX_BYTES_LABEL}. Showing lines ${offset}-${last}. Use offset=${next} to continue.)`
+        } else if (more) {
+          output += `\n\n(Showing lines ${offset}-${last} of ${totalLines}. Use offset=${next} to continue.)`
+        } else {
+          output += `\n\n(End of PDF — ${extracted.pageCount} page${extracted.pageCount === 1 ? "" : "s"}, total ${totalLines} lines)`
+        }
+        output += "\n</content>"
+
+        if (loaded.length > 0) {
+          output += `\n\n<system-reminder>\n${loaded.map((item) => item.content).join("\n\n")}\n</system-reminder>`
+        }
+
+        return {
+          title,
+          output,
+          metadata: {
+            preview: sliced.slice(0, 20).join("\n"),
+            truncated: cut || more,
+            loaded: loaded.map((item) => item.filepath),
+          },
         }
       }
 
