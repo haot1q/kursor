@@ -32,6 +32,21 @@ afterEach(async () => {
   await resetDatabase()
 })
 
+// Upstream-derived test. The `serves search endpoints` case below depends
+// on a ripgrep streaming code path in @/file/ripgrep that intermittently
+// hangs on Bun + macOS in this repository's test environment, even when
+// the `rg` binary itself is present and works correctly when invoked
+// manually (verified). The hang reproduces in full isolation outside our
+// File/Instance machinery, so it is not a regression from any kursor
+// patch — it is a pre-existing upstream interaction between Stream.callback
+// + forkScoped + Bun's subprocess handling that we have not been able to
+// fix without an invasive rewrite of rg.files() (see ripgrep.ts:346).
+//
+// CI environments (Linux + system rg in PATH) do not exhibit this hang,
+// so the test runs there by default. Locally, devs hitting the hang can
+// set KURSOR_SKIP_FLAKY_RG_TESTS=1 to skip without polluting CI output.
+const skipFlakyRg = process.env.KURSOR_SKIP_FLAKY_RG_TESTS === "1"
+
 describe("file HttpApi", () => {
   test("serves read endpoints", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -55,7 +70,7 @@ describe("file HttpApi", () => {
     expect(await status.json()).toContainEqual({ path: "hello.txt", added: 1, removed: 0, status: "added" })
   })
 
-  test("serves search endpoints", async () => {
+  test.skipIf(skipFlakyRg)("serves search endpoints", async () => {
     await using tmp = await tmpdir({ git: true })
     await Bun.write(path.join(tmp.path, "hello.txt"), "needle")
 

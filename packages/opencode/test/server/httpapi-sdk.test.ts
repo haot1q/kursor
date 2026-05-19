@@ -188,12 +188,28 @@ function resetState() {
   })
 }
 
-function httpapi<A, E>(name: string, effect: Effect.Effect<A, E, Scope.Scope>) {
-  it.live(name, effect)
+function httpapi<A, E>(
+  name: string,
+  effect: Effect.Effect<A, E, Scope.Scope>,
+  options?: { skipFlakyRg?: boolean },
+) {
+  const runner = options?.skipFlakyRg && skipFlakyRg ? it.live.skipIf(true) : it.live
+  runner(name, effect)
 }
 
-function serverPathParity<A, E>(name: string, scenario: (serverPath: ServerPath) => Effect.Effect<A, E, Scope.Scope>) {
-  it.live(
+// Set KURSOR_SKIP_FLAKY_RG_TESTS=1 locally to skip tests that depend on
+// the upstream rg.files() Stream.callback codepath (which intermittently
+// hangs on Bun + macOS even with rg installed). CI environments leave
+// the variable unset so coverage stays intact.
+const skipFlakyRg = process.env.KURSOR_SKIP_FLAKY_RG_TESTS === "1"
+
+function serverPathParity<A, E>(
+  name: string,
+  scenario: (serverPath: ServerPath) => Effect.Effect<A, E, Scope.Scope>,
+  options?: { skipFlakyRg?: boolean },
+) {
+  const runner = options?.skipFlakyRg && skipFlakyRg ? it.live.skipIf(true) : it.live
+  runner(
     name,
     Effect.gen(function* () {
       const standard = yield* scenario("default")
@@ -329,6 +345,8 @@ describe("HttpApi SDK", () => {
     }),
   )
 
+  // The find.files() call below depends on rg.files() streaming
+  // which can hang on Bun + macOS — see notes on `skipFlakyRg`.
   httpapi(
     "uses the generated SDK for safe instance routes",
     withProject("raw", { git: false, setup: writeStandardFiles }, ({ sdk }) =>
@@ -352,6 +370,7 @@ describe("HttpApi SDK", () => {
         ])
       }),
     ),
+    { skipFlakyRg: true },
   )
 
   serverPathParity("matches generated SDK global and control behavior", (serverPath) =>
@@ -459,7 +478,11 @@ describe("HttpApi SDK", () => {
     ),
   )
 
-  serverPathParity("matches generated SDK instance read routes", (serverPath) =>
+  // sdk.find.files() inside this scenario depends on rg.files() streaming
+  // which can hang on Bun + macOS — see notes on `skipFlakyRg`.
+  serverPathParity(
+    "matches generated SDK instance read routes",
+    (serverPath) =>
     withStandardProject(serverPath, ({ sdk, directory }) =>
       Effect.gen(function* () {
         const project = yield* capture(() => sdk.project.current())
@@ -508,6 +531,7 @@ describe("HttpApi SDK", () => {
         }
       }),
     ),
+    { skipFlakyRg: true },
   )
 
   serverPathParity("matches generated SDK session lifecycle routes", (serverPath) =>
