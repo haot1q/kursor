@@ -100,3 +100,36 @@ bun dev
 ```
 
 This boots `packages/opencode/src/index.ts` directly with the `browser` condition; it'll run an opentui terminal interface.
+
+## 8. Browser-only (no Electron)
+
+If you want to use the web UI in an ordinary browser — for instance, to access kursor running on a remote machine over SSH — use `dev:web` instead of `dev:desktop`:
+
+```bash
+bun run dev:web
+```
+
+This starts **two** processes in parallel and prefixes their logs:
+
+- `[server]` — sidecar listening on `http://127.0.0.1:4096`
+- `[front]`  — Vite dev server on `http://localhost:3000` (or the next free port)
+
+Open `http://localhost:3000` in your browser. The "Open project" button opens a server-backed directory browser (loopback-only `/fs/*` API) so you can pick any folder visible to the sidecar process. The desktop Electron app is **not** required.
+
+### Remote machine over SSH
+
+Forward both ports — the frontend port AND the sidecar port — because the browser-side JS calls the sidecar at `localhost:4096` and that has to land on the remote box, not on your laptop:
+
+```bash
+ssh -L 3000:localhost:3000 -L 4096:localhost:4096 user@remote
+# on the remote:
+bun run dev:web
+```
+
+Then open `http://localhost:3000` locally. The `Host` header still reads `localhost`, so the sidecar's loopback-only `/fs/*` routes accept the request through the tunnel.
+
+### Caveats
+
+- Only one sidecar may listen on `4096` at a time — close any other `kursor` desktop app or running `bun run dev:web` before starting a new one.
+- `dev:web` runs the sidecar **without** a password (`OPENCODE_SERVER_PASSWORD` unset) for convenience. The `127.0.0.1` bind means only your local user (or, via SSH tunnel, you remotely) can reach it, but anyone else on a shared machine could too. Set `OPENCODE_SERVER_PASSWORD=...` to enable Basic auth.
+- The frontend reads `VITE_OPENCODE_SERVER_HOST` / `VITE_OPENCODE_SERVER_PORT` env vars at build time. Default is `localhost:4096`; override only if you have a custom sidecar setup.

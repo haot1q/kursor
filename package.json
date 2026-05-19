@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "bun run --cwd packages/opencode --conditions=browser src/index.ts",
     "dev:desktop": "bun --cwd packages/desktop dev",
-    "dev:web": "bun --cwd packages/app dev",
+    "dev:web:server": "bun run --cwd packages/opencode --conditions=browser src/index.ts serve --port 4096 --hostname 127.0.0.1",
+    "dev:web:front": "bun --cwd packages/app dev",
+    "dev:web": "concurrently --kill-others-on-fail --names server,front --prefix-colors blue,green \"bun run dev:web:server\" \"bun run dev:web:front\"",
     "build:desktop": "cd packages/desktop && OPENCODE_CHANNEL=${OPENCODE_CHANNEL:-prod} bun run build",
     "package:mac": "cd packages/desktop && OPENCODE_CHANNEL=${OPENCODE_CHANNEL:-prod} bun run package:mac",
     "package:win": "cd packages/desktop && bun run prepare:win-natives && OPENCODE_CHANNEL=${OPENCODE_CHANNEL:-prod} bun run package:win",
@@ -87,6 +89,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/mime-types": "3.0.1",
     "@typescript/native-preview": "catalog:",
+    "concurrently": "9.2.1",
     "glob": "13.0.5",
     "oxlint": "1.60.0",
     "oxlint-tsgolint": "0.21.0",
