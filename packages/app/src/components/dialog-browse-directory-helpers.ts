@@ -23,6 +23,15 @@ export interface FsFailure {
    * persistent hint inside the dialog (not just a transient toast).
    */
   banner: string | null
+  /**
+   * True if the failure represents a user-initiated cancellation (e.g.
+   * the dialog was closed mid-fetch and the browser aborted the in-flight
+   * request, surfacing a DOMException("AbortError")). Callers must skip
+   * both toast and banner emission for these — popping a "Cannot load
+   * home directory" toast on an already-closed dialog is jarring and
+   * looks like a real failure to the user.
+   */
+  silent: boolean
 }
 
 /**
@@ -65,6 +74,16 @@ export function classifyFsFailure(
   options: { suppressBanner?: boolean } = {},
 ): FsFailure {
   const message = errorMessage(err)
+
+  // User-cancellation path. Must be checked BEFORE the TypeError-as-
+  // network heuristic because some fetch polyfills wrap aborts in
+  // TypeError. Returning silent: true tells the caller not to emit
+  // anything — the user closed the dialog, they don't need a toast
+  // about it.
+  if (isAbortError(err)) {
+    return { toast: "", banner: null, silent: true }
+  }
+
   const network = isNetworkError(err, message)
 
   if (network) {
@@ -75,14 +94,25 @@ export function classifyFsFailure(
     const banner = options.suppressBanner
       ? null
       : `Cannot reach the local server (${message}). Typed paths still work; the shortcut list is hidden until the server responds.`
-    return { toast, banner }
+    return { toast, banner, silent: false }
   }
 
   const routeLabel = kind === "home" ? "home directory" : "shortcuts"
   return {
     toast: `Cannot load ${routeLabel}: ${message}`,
     banner: null,
+    silent: false,
   }
+}
+
+function isAbortError(err: unknown): boolean {
+  if (err == null) return false
+  // DOMException with name "AbortError" is what `fetch()` throws when
+  // the AbortSignal fires. Some non-browser runtimes (Node test envs)
+  // don't have DOMException but still set `.name` to "AbortError".
+  if (typeof DOMException !== "undefined" && err instanceof DOMException && err.name === "AbortError") return true
+  if (err instanceof Error && err.name === "AbortError") return true
+  return false
 }
 
 function errorMessage(err: unknown): string {
@@ -122,10 +152,18 @@ export function buildShortcutEntries(
 ): Array<{ label: string; path: string }> {
   if (!shortcuts) return []
   const out: Array<{ label: string; path: string }> = []
-  out.push({ label: "Home", path: shortcuts.home })
+  // Defensive against server skew / cached stale responses: any of these
+  // fields can in principle arrive as null, undefined, or — for `mounts`
+  // — a non-array. Skip empties rather than risk a TypeError tearing
+  // down the dialog or rendering "" as a clickable bogus path.
+  if (shortcuts.home) out.push({ label: "Home", path: shortcuts.home })
   if (shortcuts.desktop) out.push({ label: "Desktop", path: shortcuts.desktop })
   if (shortcuts.documents) out.push({ label: "Documents", path: shortcuts.documents })
   if (shortcuts.downloads) out.push({ label: "Downloads", path: shortcuts.downloads })
-  for (const m of shortcuts.mounts) out.push({ label: m, path: m })
+  if (Array.isArray(shortcuts.mounts)) {
+    for (const m of shortcuts.mounts) {
+      if (typeof m === "string" && m.length > 0) out.push({ label: m, path: m })
+    }
+  }
   return out
 }

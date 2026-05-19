@@ -88,4 +88,26 @@ describe("sidecar build-node script is shipped to clones", () => {
     const text = fs.readFileSync(buildScriptAbs, "utf8")
     expect(text).toMatch(/external\s*:\s*\[[^\]]*@lydell\/node-pty/)
   })
+
+  test("build-node.ts injects every build-time define referenced as a bare identifier in src", () => {
+    // The opencode src code uses these names as BARE identifiers
+    // (not process.env.X). Without a matching `define` in Bun.build,
+    // the bundle ships the raw identifier verbatim and the runtime
+    // crashes the first time the code path is hit.
+    //
+    //   src/file/watcher.ts:    `... -${OPENCODE_LIBC || "glibc"} ...`
+    //     → ReferenceError on Linux when @parcel/watcher is lazy-loaded
+    //   src/cli/.../installer.ts (etc.):   typeof OPENCODE_VERSION === "string"
+    //     → typeof tolerates undef, but version reports as "local"
+    //
+    // The sibling script `script/build.ts` (used for cross-arch binary
+    // builds) DOES inject these. `build-node.ts` is what `predev.ts`
+    // and `prebuild.ts` actually invoke for the Electron sidecar, so
+    // these defines must stay in lockstep.
+    const text = fs.readFileSync(buildScriptAbs, "utf8")
+    expect(text, "OPENCODE_MIGRATIONS define missing").toMatch(/OPENCODE_MIGRATIONS\s*:/)
+    expect(text, "OPENCODE_CHANNEL define missing").toMatch(/OPENCODE_CHANNEL\s*:/)
+    expect(text, "OPENCODE_LIBC define missing → Linux runtime crash").toMatch(/OPENCODE_LIBC\s*:/)
+    expect(text, "OPENCODE_VERSION define missing → version reports as 'local'").toMatch(/OPENCODE_VERSION\s*:/)
+  })
 })

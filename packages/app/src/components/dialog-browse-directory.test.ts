@@ -196,4 +196,85 @@ describe("buildShortcutEntries", () => {
     const entries = buildShortcutEntries(shortcuts)
     expect(entries.map((e) => e.path)).toEqual(["/h", "/z", "/a", "/m"])
   })
+
+  // Defensive coverage for malformed server responses. The server
+  // schema declares mounts as `string[]` but reality has many ways to
+  // produce missing/null fields: a future server refactor, an older
+  // sidecar version paired with a newer frontend (Electron upgrade
+  // skew), or a tampered/cached response. The helper must not throw
+  // — the dialog must keep rendering even if the payload is junk.
+  test("malformed: mounts === undefined does not throw", () => {
+    const bad = { home: "/h", desktop: null, documents: null, downloads: null } as unknown as FsShortcuts
+    expect(() => buildShortcutEntries(bad)).not.toThrow()
+    const entries = buildShortcutEntries(bad)
+    expect(entries.map((e) => e.path)).toEqual(["/h"])
+  })
+
+  test("malformed: mounts === null does not throw", () => {
+    const bad = {
+      home: "/h",
+      desktop: null,
+      documents: null,
+      downloads: null,
+      mounts: null,
+    } as unknown as FsShortcuts
+    expect(() => buildShortcutEntries(bad)).not.toThrow()
+    expect(buildShortcutEntries(bad).map((e) => e.path)).toEqual(["/h"])
+  })
+
+  test("malformed: mounts === non-array (e.g. server bug returns object) does not throw", () => {
+    const bad = {
+      home: "/h",
+      desktop: null,
+      documents: null,
+      downloads: null,
+      mounts: { 0: "/x", 1: "/y" },
+    } as unknown as FsShortcuts
+    expect(() => buildShortcutEntries(bad)).not.toThrow()
+    // Reject non-arrays entirely rather than risk leaking object keys
+    // ("0", "1") into the UI as fake paths.
+    expect(buildShortcutEntries(bad).map((e) => e.path)).toEqual(["/h"])
+  })
+
+  test("malformed: home === '' is preserved (server contract guarantees non-empty, but helper is permissive)", () => {
+    const bad: FsShortcuts = { home: "", desktop: null, documents: null, downloads: null, mounts: [] }
+    // Skip empty home — clicking it would try to list "" which the
+    // server rejects with 400. Better to hide than to break UX.
+    expect(buildShortcutEntries(bad)).toEqual([])
+  })
+})
+
+describe("classifyFsFailure: AbortError / user-cancellation handling", () => {
+  test("DOMException AbortError → silent failure (caller skips toast + banner)", () => {
+    // Reproduces the dialog-cancel race: user opens dialog, sidecar
+    // is slow, user gives up and closes the dialog before /fs/home
+    // resolves. The browser aborts the in-flight fetch (when we
+    // wire up AbortController) → fetch rejects with AbortError →
+    // classifyFsFailure used to label this as a "Cannot load home
+    // directory: signal is aborted" toast, fired on an already-closed
+    // dialog. The new contract: classify as silent so the catch block
+    // can skip emission entirely.
+    const err =
+      typeof DOMException !== "undefined"
+        ? new DOMException("The user aborted a request.", "AbortError")
+        : Object.assign(new Error("aborted"), { name: "AbortError" })
+    const out = classifyFsFailure(err as unknown, "home")
+    expect(out.silent).toBe(true)
+  })
+
+  test("Error with name === 'AbortError' (non-DOM env) → silent", () => {
+    const err = Object.assign(new Error("aborted"), { name: "AbortError" })
+    expect(classifyFsFailure(err, "home").silent).toBe(true)
+  })
+
+  test("regular TypeError still classified as non-silent network failure", () => {
+    const out = classifyFsFailure(new TypeError("Failed to fetch"), "home")
+    expect(out.silent).toBe(false)
+    expect(out.banner).not.toBeNull()
+  })
+
+  test("HTTP error still classified as non-silent route failure", () => {
+    const out = classifyFsFailure(new Error("500 Internal Server Error"), "home")
+    expect(out.silent).toBe(false)
+  })
 })

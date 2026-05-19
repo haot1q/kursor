@@ -13,7 +13,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { showToast } from "@opencode-ai/ui/toast"
-import { createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { useServer } from "@/context/server"
 import { buildShortcutEntries, classifyFsFailure, type FsShortcuts } from "./dialog-browse-directory-helpers"
@@ -107,15 +107,27 @@ export function DialogBrowseDirectory(props: DialogBrowseDirectoryProps) {
   // case (typical of the IPv6 / server-down scenario). If only one route
   // fails (e.g. /fs/shortcuts returns 500 while /fs/home is fine) the
   // surviving fetcher still emits its own targeted toast.
+  //
+  // Disposal guard: if the user closes the dialog before either fetch
+  // settles, we must not call showToast (a global side effect) on a
+  // detached component — the user would see a "Cannot reach server"
+  // toast appear after the dialog they just dismissed, which reads as
+  // a real failure they did nothing to cause. Solid's onCleanup runs
+  // synchronously when the component unmounts; any catch block firing
+  // after that point becomes a no-op.
   let bannerClaimed = false
   let toastClaimed = false
+  let disposed = false
+  onCleanup(() => {
+    disposed = true
+  })
   const emitBanner = (text: string | null) => {
-    if (bannerClaimed || !text) return
+    if (disposed || bannerClaimed || !text) return
     bannerClaimed = true
     setBannerMessage(text)
   }
   const emitToast = (title: string) => {
-    if (toastClaimed) return
+    if (disposed || toastClaimed || !title) return
     toastClaimed = true
     showToast({ title })
   }
@@ -124,8 +136,10 @@ export function DialogBrowseDirectory(props: DialogBrowseDirectoryProps) {
       return await apiGet<FsHome>("/fs/home")
     } catch (err) {
       const failure = classifyFsFailure(err, "home")
-      emitBanner(failure.banner)
-      emitToast(failure.toast)
+      if (!failure.silent) {
+        emitBanner(failure.banner)
+        emitToast(failure.toast)
+      }
       return null
     }
   })
@@ -134,8 +148,10 @@ export function DialogBrowseDirectory(props: DialogBrowseDirectoryProps) {
       return await apiGet<FsShortcuts>("/fs/shortcuts")
     } catch (err) {
       const failure = classifyFsFailure(err, "shortcuts", { suppressBanner: bannerClaimed })
-      emitBanner(failure.banner)
-      emitToast(failure.toast)
+      if (!failure.silent) {
+        emitBanner(failure.banner)
+        emitToast(failure.toast)
+      }
       return null
     }
   })
